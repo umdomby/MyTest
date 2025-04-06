@@ -11,7 +11,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -20,6 +22,10 @@ import com.example.webrtcapp.WebSocketClient
 import com.example.webrtcapp.WebSocketListener
 import org.json.JSONObject
 import org.webrtc.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.lightColorScheme
+
 
 class MainActivity : ComponentActivity() {
     private lateinit var webRTCClient: WebRTCClient
@@ -39,6 +45,7 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.all { it.value }
         if (allGranted) {
             initializeWebRTC()
+            setUI()
         } else {
             Toast.makeText(
                 this,
@@ -54,10 +61,13 @@ class MainActivity : ComponentActivity() {
 
         if (checkAllPermissionsGranted()) {
             initializeWebRTC()
+            setUI()
         } else {
             requestPermissionLauncher.launch(requiredPermissions)
         }
+    }
 
+    private fun setUI() {
         setContent {
             WebRTCAppTheme {
                 WebRTCAppUI()
@@ -72,33 +82,55 @@ class MainActivity : ComponentActivity() {
         var isConnected by remember { mutableStateOf(false) }
         var isCallActive by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf("") }
+        var connectionState by remember { mutableStateOf("Initializing...") }
+        val context = LocalContext.current
+
+        if (!::webRTCClient.isInitialized || !::webSocketClient.isInitialized) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return
+        }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
+            Text(
+                text = "Status: $connectionState",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             TextField(
                 value = username,
                 onValueChange = { username = it },
                 label = { Text("Username") },
                 modifier = Modifier.fillMaxWidth()
             )
+
             Spacer(modifier = Modifier.height(8.dp))
+
             TextField(
                 value = room,
                 onValueChange = { room = it },
                 label = { Text("Room") },
                 modifier = Modifier.fillMaxWidth()
             )
+
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = {
                     connectToRoom(username, room)
                     isConnected = true
+                    connectionState = "Connecting..."
                 },
-                enabled = !isConnected
+                enabled = !isConnected,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text(if (isConnected) "Connected" else "Connect")
             }
@@ -109,8 +141,10 @@ class MainActivity : ComponentActivity() {
                 onClick = {
                     startCall()
                     isCallActive = true
+                    connectionState = "Starting call..."
                 },
-                enabled = isConnected && !isCallActive
+                enabled = isConnected && !isCallActive,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text(if (isCallActive) "Call Active" else "Start Call")
             }
@@ -122,6 +156,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.padding(8.dp)
                 )
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(
                 modifier = Modifier
@@ -135,6 +171,7 @@ class MainActivity : ComponentActivity() {
                             view.init(eglBase.eglBaseContext, null)
                             view.setMirror(true)
                             view.setEnableHardwareScaler(true)
+                            view.setZOrderMediaOverlay(true)
                             webRTCClient.createLocalStream(view)
                         }
                     },
@@ -146,6 +183,7 @@ class MainActivity : ComponentActivity() {
                         SurfaceViewRenderer(context).also { view ->
                             view.init(eglBase.eglBaseContext, null)
                             view.setEnableHardwareScaler(true)
+                            view.setZOrderMediaOverlay(true)
                             remoteVideoView = view
                         }
                     },
@@ -181,14 +219,18 @@ class MainActivity : ComponentActivity() {
 
                 override fun onAddStream(stream: MediaStream?) {
                     Log.d("WebRTCApp", "onAddStream: ${stream?.id}")
-                    stream?.videoTracks?.forEach { track ->
-                        track.addSink(remoteVideoView)
+                    runOnUiThread {
+                        stream?.videoTracks?.forEach { track ->
+                            remoteVideoView?.let { track.addSink(it) }
+                        }
                     }
                 }
 
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
+                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                    Log.d("WebRTCApp", "IceConnectionState: $state")
+                }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
                 override fun onRemoveStream(stream: MediaStream?) {}
@@ -211,8 +253,6 @@ class MainActivity : ComponentActivity() {
                                 "leave" -> Log.d("WebRTCApp", "User left the room")
                                 else -> Log.w("WebRTCApp", "Unknown message type: ${message.getString("type")}")
                             }
-                        } else {
-                            Log.w("WebRTCApp", "Message does not contain 'type' field: $message")
                         }
                     } catch (e: Exception) {
                         Log.e("WebRTCApp", "Error processing message", e)
@@ -222,14 +262,23 @@ class MainActivity : ComponentActivity() {
 
             override fun onConnected() {
                 Log.d("WebRTCApp", "WebSocket connected")
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "WebSocket connected", Toast.LENGTH_SHORT).show()
+                }
             }
 
             override fun onDisconnected() {
                 Log.d("WebRTCApp", "WebSocket disconnected")
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "WebSocket disconnected", Toast.LENGTH_SHORT).show()
+                }
             }
 
             override fun onError(error: String) {
                 Log.e("WebRTCApp", "WebSocket error: $error")
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "WebSocket error: $error", Toast.LENGTH_SHORT).show()
+                }
             }
         })
     }
@@ -338,14 +387,24 @@ class MainActivity : ComponentActivity() {
         webSocketClient.disconnect()
         webRTCClient.close()
         eglBase.release()
+        remoteVideoView?.release()
         super.onDestroy()
     }
 }
 
 @Composable
-fun WebRTCAppTheme(content: @Composable () -> Unit) {
+fun WebRTCAppTheme(
+    content: @Composable () -> Unit
+) {
+    val colorScheme = lightColorScheme(
+        primary = Color(0xFF6200EE),
+        secondary = Color(0xFF03DAC6),
+        surface = Color(0xFFFFFFFF),
+        onSurface = Color(0xFF000000)
+    )
+
     MaterialTheme(
-        colorScheme = MaterialTheme.colorScheme,
+        colorScheme = colorScheme,
         content = content
     )
 }
