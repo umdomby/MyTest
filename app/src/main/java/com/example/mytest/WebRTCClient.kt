@@ -7,47 +7,43 @@ import org.webrtc.*
 
 class WebRTCClient(
     private val context: Context,
-    private var observer: PeerConnection.Observer // Изменим на var
+    private var observer: PeerConnection.Observer
 ) {
     private val peerConnectionFactory: PeerConnectionFactory
     private val iceServers = listOf(
-        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-        PeerConnection.IceServer.builder("turn:your-turn-server.com")
-            .setUsername("username")
-            .setPassword("password")
-            .createIceServer()
+        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
     )
     private val peerConnection: PeerConnection
-    val eglBase: EglBase = EglBase.create()
+    private val eglBase: EglBase = EglBase.create()
 
-    private lateinit var localVideoTrack: VideoTrack
-    private lateinit var localAudioTrack: AudioTrack
-    private lateinit var videoCapturer: VideoCapturer
-    private lateinit var surfaceTextureHelper: SurfaceTextureHelper
+    private var localVideoTrack: VideoTrack? = null
+    private var localAudioTrack: AudioTrack? = null
+    private var videoCapturer: VideoCapturer? = null
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     init {
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(context)
-                .setEnableInternalTracer(true)
-                .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
-                .createInitializationOptions()
-        )
+        val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
+            .setEnableInternalTracer(true)
+            .createInitializationOptions()
+        PeerConnectionFactory.initialize(initializationOptions)
 
-        val options = PeerConnectionFactory.Options().apply {
-            disableEncryption = false
-            disableNetworkMonitor = false
-        }
-
+        val options = PeerConnectionFactory.Options()
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setOptions(options)
-            .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
+            .setVideoEncoderFactory(
+                DefaultVideoEncoderFactory(
+                    eglBase.eglBaseContext,
+                    true,  // enableIntelVp8Encoder
+                    true   // enableH264HighProfile
+                )
+            )
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
             .createPeerConnectionFactory()
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-            iceCandidatePoolSize = 2
+            iceCandidatePoolSize = 1
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
@@ -58,56 +54,58 @@ class WebRTCClient(
     }
 
     fun createLocalStream(localVideoOutput: SurfaceViewRenderer) {
-        val audioConstraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+        try {
+            // Audio
+            val audioConstraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            }
+            val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
+            localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK_ID", audioSource)
+
+            // Video
+            videoCapturer = createCameraCapturer()
+            if (videoCapturer == null) {
+                Toast.makeText(context, "Failed to initialize camera", Toast.LENGTH_LONG).show()
+                return
+            }
+
+            surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
+            val videoSource = peerConnectionFactory.createVideoSource(false)
+            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
+            videoCapturer?.startCapture(640, 480, 30) // Lower resolution for better compatibility
+
+            localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK_ID", videoSource)
+            localVideoTrack?.addSink(localVideoOutput)
+
+            // Add tracks to peer connection
+            localAudioTrack?.let { peerConnection.addTrack(it) }
+            localVideoTrack?.let { peerConnection.addTrack(it) }
+        } catch (e: Exception) {
+            Log.e("WebRTCClient", "Error creating local stream", e)
+            Toast.makeText(context, "Error creating stream: ${e.message}", Toast.LENGTH_LONG).show()
         }
-
-        val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
-        localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK_ID", audioSource)
-
-        videoCapturer = createCameraCapturer() ?: run {
-            Log.e("mytest", "Failed to create camera capturer")
-            Toast.makeText(context, "Failed to initialize camera", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
-        val videoSource = peerConnectionFactory.createVideoSource(false)
-        videoCapturer.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
-        videoCapturer.startCapture(1280, 720, 30)
-
-        localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK_ID", videoSource)
-        localVideoTrack.addSink(localVideoOutput)
-
-        peerConnection.addTrack(localAudioTrack)
-        peerConnection.addTrack(localVideoTrack)
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
-        val enumerator = Camera2Enumerator(context)
-        val deviceNames = enumerator.deviceNames
+        return try {
+            val enumerator = Camera2Enumerator(context)
+            val deviceNames = enumerator.deviceNames
 
-        if (deviceNames.isNotEmpty()) {
             for (deviceName in deviceNames) {
                 if (enumerator.isFrontFacing(deviceName)) {
                     return enumerator.createCapturer(deviceName, null)
                 }
             }
-            return enumerator.createCapturer(deviceNames[0], null)
-        }
-        return createEmulatorCameraCapturer()
-    }
 
-    private fun createEmulatorCameraCapturer(): VideoCapturer? {
-        return try {
-            val constructor = Class.forName("org.webrtc.Camera1Enumerator")
-                .getDeclaredConstructor()
-                .newInstance() as CameraEnumerator
-            val deviceNames = constructor.deviceNames
-            if (deviceNames.isNotEmpty()) constructor.createCapturer(deviceNames[0], null) else null
+            if (deviceNames.isNotEmpty()) {
+                enumerator.createCapturer(deviceNames[0], null)
+            } else {
+                null
+            }
         } catch (e: Exception) {
+            Log.e("WebRTCClient", "Failed to create camera capturer", e)
             null
         }
     }
@@ -138,13 +136,14 @@ class WebRTCClient(
 
     fun close() {
         try {
-            videoCapturer.stopCapture()
-            videoCapturer.dispose()
-            surfaceTextureHelper.dispose()
+            videoCapturer?.stopCapture()
+            videoCapturer?.dispose()
+            surfaceTextureHelper?.dispose()
+            localVideoTrack?.dispose()
+            localAudioTrack?.dispose()
             peerConnection.dispose()
-            peerConnectionFactory.dispose()
         } catch (e: Exception) {
-            Log.e("mytest", "Error closing WebRTCClient", e)
+            Log.e("WebRTCClient", "Error closing resources", e)
         }
     }
 }

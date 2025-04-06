@@ -158,45 +158,51 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(300.dp)
-                    .padding(8.dp)
             ) {
+                // Локальное видео
                 AndroidView(
                     factory = { context ->
-                        SurfaceViewRenderer(context).also { view ->
-                            view.init(eglBase.eglBaseContext, null)
-                            view.setMirror(true)
-                            view.setEnableHardwareScaler(true)
-                            view.setZOrderMediaOverlay(true)
-                            // Убедимся, что локальный поток создан
-                            webRTCClient.createLocalStream(view)
+                        SurfaceViewRenderer(context).apply {
+                            init(eglBase.eglBaseContext, null)
+                            setMirror(true)
+                            setEnableHardwareScaler(true)
+                            setZOrderMediaOverlay(true)
+                            setZOrderOnTop(true)
+                            webRTCClient.createLocalStream(this)
                         }
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .size(120.dp)
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
                 )
 
+                // Удаленное видео
                 AndroidView(
                     factory = { context ->
-                        SurfaceViewRenderer(context).also { view ->
-                            view.init(eglBase.eglBaseContext, null)
-                            view.setEnableHardwareScaler(true)
-                            view.setZOrderMediaOverlay(true)
-                            remoteVideoView = view
-                            // Убедимся, что удалённый поток добавлен
+                        SurfaceViewRenderer(context).apply {
+                            init(eglBase.eglBaseContext, null)
+                            setEnableHardwareScaler(true)
+                            setZOrderMediaOverlay(true)
+                            setZOrderOnTop(true)
+                            remoteVideoView = this
+
                             webRTCClient.setObserver(object : PeerConnection.Observer {
                                 override fun onAddStream(stream: MediaStream?) {
                                     stream?.videoTracks?.forEach { track ->
-                                        track.addSink(view)
+                                        track.addSink(this@apply) // Явно используем SurfaceViewRenderer как VideoSink
                                     }
                                 }
-                                // Остальные методы оставляем пустыми
                                 override fun onIceCandidate(candidate: IceCandidate?) {}
                                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
                                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-                                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
+                                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                                    Log.d("WebRTC", "IceConnectionState: $state")
+                                }
                                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
                                 override fun onRemoveStream(stream: MediaStream?) {}
@@ -206,7 +212,7 @@ class MainActivity : ComponentActivity() {
                             })
                         }
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
