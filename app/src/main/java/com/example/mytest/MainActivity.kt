@@ -19,10 +19,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.*
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.lightColorScheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var webRTCClient: WebRTCClient
@@ -64,7 +63,7 @@ class MainActivity : ComponentActivity() {
             initializeWebRTC()
             setUI()
         } else {
-            showToast("Необходимы все разрешения")
+            showToast("All permissions are required")
             finish()
         }
     }
@@ -82,15 +81,13 @@ class MainActivity : ComponentActivity() {
 
     private fun setUI() {
         setContent {
-            MaterialTheme(
-                colorScheme = lightColorScheme(
-                    primary = Color(0xFF6200EE),
-                    secondary = Color(0xFF03DAC6),
-                    surface = Color.White,
-                    onSurface = Color.Black
-                )
-            ) {
-                VideoCallUI()
+            AppTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    VideoCallUI()
+                }
             }
         }
     }
@@ -103,9 +100,9 @@ class MainActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .padding(16.dp)
         ) {
-            // Video container
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -128,59 +125,109 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Controls
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(16.dp)
             ) {
+                Text(
+                    text = "Status: ${if (isConnected) "Connected" else "Disconnected"}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("Username") },
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text("Username", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = room,
                     onValueChange = { room = it },
-                    label = { Text("Room") },
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text("Room", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
                     onClick = { connectToRoom(username, room) },
                     enabled = !isConnected,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
                     Text(if (isConnected) "Connected" else "Connect")
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 if (isConnected) {
                     if (!isCallActive) {
                         Button(
                             onClick = { startCall() },
                             enabled = usersInRoom.size > 1,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary
+                            )
                         ) {
                             Text("Start Call")
                         }
                     } else {
                         Button(
                             onClick = { endCall() },
+                            modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            ),
-                            modifier = Modifier.fillMaxWidth()
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            )
                         ) {
                             Text("End Call")
                         }
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
+
                 if (usersInRoom.isNotEmpty()) {
-                    Text("Users in room (${usersInRoom.size}):")
-                    usersInRoom.forEach { user ->
-                        Text("- $user")
+                    Text(
+                        "Users in room (${usersInRoom.size}):",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Column {
+                        usersInRoom.forEach { user ->
+                            Text(
+                                "- $user",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -190,7 +237,6 @@ class MainActivity : ComponentActivity() {
     private fun connectToRoom(username: String, room: String) {
         currentUsername = username
         currentRoom = room
-
         webSocketClient.connect("wss://anybet.site/ws")
         val joinMessage = JSONObject().apply {
             put("room", room)
@@ -417,4 +463,46 @@ class MainActivity : ComponentActivity() {
         remoteView.release()
         super.onDestroy()
     }
+}
+
+@Composable
+fun AppTheme(
+    darkTheme: Boolean = true,
+    content: @Composable () -> Unit
+) {
+    val colorScheme = if (darkTheme) {
+        darkColorScheme(
+            primary = Color(0xFFBB86FC),
+            secondary = Color(0xFF03DAC6),
+            tertiary = Color(0xFF3700B3),
+            background = Color(0xFF121212),
+            surface = Color(0xFF1E1E1E),
+            surfaceVariant = Color(0xFF2D2D2D),
+            onPrimary = Color.Black,
+            onSecondary = Color.Black,
+            onBackground = Color.White,
+            onSurface = Color.White,
+            onSurfaceVariant = Color(0xFFBBBBBB)
+        )
+    } else {
+        lightColorScheme(
+            primary = Color(0xFF6200EE),
+            secondary = Color(0xFF03DAC6),
+            tertiary = Color(0xFF3700B3),
+            background = Color.White,
+            surface = Color(0xFFFFFFFF),
+            surfaceVariant = Color(0xFFEEEEEE),
+            onPrimary = Color.White,
+            onSecondary = Color.Black,
+            onBackground = Color.Black,
+            onSurface = Color.Black,
+            onSurfaceVariant = Color(0xFF444444)
+        )
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography(),
+        content = content
+    )
 }
