@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
         Manifest.permission.MODIFY_AUDIO_SETTINGS
     )
 
+
+
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -169,6 +171,7 @@ class MainActivity : ComponentActivity() {
                             view.setMirror(true)
                             view.setEnableHardwareScaler(true)
                             view.setZOrderMediaOverlay(true)
+                            // Убедимся, что локальный поток создан
                             webRTCClient.createLocalStream(view)
                         }
                     },
@@ -182,6 +185,25 @@ class MainActivity : ComponentActivity() {
                             view.setEnableHardwareScaler(true)
                             view.setZOrderMediaOverlay(true)
                             remoteVideoView = view
+                            // Убедимся, что удалённый поток добавлен
+                            webRTCClient.setObserver(object : PeerConnection.Observer {
+                                override fun onAddStream(stream: MediaStream?) {
+                                    stream?.videoTracks?.forEach { track ->
+                                        track.addSink(view)
+                                    }
+                                }
+                                // Остальные методы оставляем пустыми
+                                override fun onIceCandidate(candidate: IceCandidate?) {}
+                                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
+                                override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+                                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
+                                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+                                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+                                override fun onRemoveStream(stream: MediaStream?) {}
+                                override fun onDataChannel(channel: DataChannel?) {}
+                                override fun onRenegotiationNeeded() {}
+                                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+                            })
                         }
                     },
                     modifier = Modifier.weight(1f)

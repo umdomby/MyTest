@@ -7,7 +7,7 @@ import org.webrtc.*
 
 class WebRTCClient(
     private val context: Context,
-    private val observer: PeerConnection.Observer
+    private var observer: PeerConnection.Observer // Изменим на var
 ) {
     private val peerConnectionFactory: PeerConnectionFactory
     private val iceServers = listOf(
@@ -51,6 +51,10 @@ class WebRTCClient(
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
+    }
+
+    fun setObserver(observer: PeerConnection.Observer) {
+        this.observer = observer
     }
 
     fun createLocalStream(localVideoOutput: SurfaceViewRenderer) {
