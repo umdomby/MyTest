@@ -11,8 +11,8 @@ class WebRTCClient(
     private val remoteView: SurfaceViewRenderer,
     private val observer: PeerConnection.Observer
 ) {
-    private val peerConnectionFactory: PeerConnectionFactory
-    private val peerConnection: PeerConnection
+    val peerConnectionFactory: PeerConnectionFactory
+    val peerConnection: PeerConnection
     private var localVideoTrack: VideoTrack? = null
     private var videoCapturer: VideoCapturer? = null
 
@@ -38,6 +38,7 @@ class WebRTCClient(
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
         createLocalStream()
     }
+
     fun setRemoteDescription(sdp: SessionDescription, observer: SdpObserver) {
         peerConnection.setRemoteDescription(observer, sdp)
     }
@@ -54,6 +55,13 @@ class WebRTCClient(
         peerConnection.addIceCandidate(candidate)
     }
 
+    fun createOffer(observer: SdpObserver) {
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+        }
+        peerConnection.createOffer(observer, constraints)
+    }
 
     private fun createLocalStream() {
         try {
@@ -78,28 +86,20 @@ class WebRTCClient(
                 peerConnection.addTrack(localVideoTrack!!)
             }
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error creating stream", e)
+            Log.e("WebRTCClient", "Ошибка создания потока", e)
         }
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
         return Camera2Enumerator(context).run {
             deviceNames.firstOrNull { isFrontFacing(it) }?.let {
-                Log.d("WebRTC", "Using front camera: $it")
+                Log.d("WebRTC", "Используется фронтальная камера: $it")
                 createCapturer(it, null)
             } ?: deviceNames.firstOrNull()?.let {
-                Log.d("WebRTC", "Using first available camera: $it")
+                Log.d("WebRTC", "Используется первая доступная камера: $it")
                 createCapturer(it, null)
             }
         }
-    }
-
-    fun createOffer(sdpObserver: SdpObserver) {
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-        }
-        peerConnection.createOffer(sdpObserver, constraints)
     }
 
     fun close() {

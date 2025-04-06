@@ -22,10 +22,6 @@ import org.webrtc.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
-import org.webrtc.IceCandidate
-import org.webrtc.SessionDescription
-import org.webrtc.SdpObserver
-import org.webrtc.MediaConstraints
 
 class MainActivity : ComponentActivity() {
     private lateinit var webRTCClient: WebRTCClient
@@ -49,6 +45,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var currentUsername = ""
+    private var currentRoom = ""
+    private var isConnected by mutableStateOf(false)
+    private var isCallActive by mutableStateOf(false)
+    private var usersInRoom by mutableStateOf(emptyList<String>())
+
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
         Manifest.permission.RECORD_AUDIO
@@ -61,7 +63,7 @@ class MainActivity : ComponentActivity() {
             initializeWebRTC()
             setUI()
         } else {
-            Toast.makeText(this, "All permissions are required", Toast.LENGTH_LONG).show()
+            showToast("Необходимы все разрешения")
             finish()
         }
     }
@@ -85,37 +87,34 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-
     @Composable
     fun VideoCallUI() {
         var username by remember { mutableStateOf("User${(1000..9999).random()}") }
         var room by remember { mutableStateOf("room1") }
-        var isConnected by remember { mutableStateOf(false) }
-        var isCallActive by remember { mutableStateOf(false) }
         val context = LocalContext.current
 
         Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            // UI элементы управления
             ControlsSection(
                 username = username,
                 room = room,
                 isConnected = isConnected,
                 isCallActive = isCallActive,
+                usersInRoom = usersInRoom,
                 onUsernameChange = { username = it },
                 onRoomChange = { room = it },
                 onConnect = {
                     connectToRoom(username, room)
-                    isConnected = true
                 },
                 onCall = {
                     startCall()
-                    isCallActive = true
+                },
+                onEndCall = {
+                    endCall()
                 }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Видео элементы
             VideoSection()
         }
     }
@@ -126,16 +125,18 @@ class MainActivity : ComponentActivity() {
         room: String,
         isConnected: Boolean,
         isCallActive: Boolean,
+        usersInRoom: List<String>,
         onUsernameChange: (String) -> Unit,
         onRoomChange: (String) -> Unit,
         onConnect: () -> Unit,
-        onCall: () -> Unit
+        onCall: () -> Unit,
+        onEndCall: () -> Unit
     ) {
         Column {
             TextField(
                 value = username,
                 onValueChange = onUsernameChange,
-                label = { Text("Username") },
+                label = { Text("Имя пользователя") },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -144,7 +145,7 @@ class MainActivity : ComponentActivity() {
             TextField(
                 value = room,
                 onValueChange = onRoomChange,
-                label = { Text("Room") },
+                label = { Text("Комната") },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -155,17 +156,37 @@ class MainActivity : ComponentActivity() {
                 enabled = !isConnected,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (isConnected) "Connected" else "Connect")
+                Text(if (isConnected) "Подключено" else "Подключиться")
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Button(
-                onClick = onCall,
-                enabled = isConnected && !isCallActive,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (isCallActive) "Call Active" else "Start Call")
+            if (isConnected) {
+                if (!isCallActive) {
+                    Button(
+                        onClick = onCall,
+                        enabled = usersInRoom.size > 1,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Начать звонок")
+                    }
+                } else {
+                    Button(
+                        onClick = onEndCall,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Завершить звонок")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (usersInRoom.isNotEmpty()) {
+                Text("Участники в комнате (${usersInRoom.size}):", style = MaterialTheme.typography.bodyMedium)
+                usersInRoom.forEach { user ->
+                    Text("- $user", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
@@ -173,13 +194,11 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun VideoSection() {
         Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
-            // Удаленное видео (основной экран)
             AndroidView(
                 factory = { remoteView },
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Локальное видео (маленькое окошко)
             AndroidView(
                 factory = { localView },
                 modifier = Modifier
@@ -189,26 +208,17 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
-    private fun sendIceCandidate(candidate: IceCandidate) {
-        val message = JSONObject().apply {
-            put("type", "ice_candidate")
-            put("ice", JSONObject().apply {
-                put("sdpMid", candidate.sdpMid)
-                put("sdpMLineIndex", candidate.sdpMLineIndex)
-                put("sdp", candidate.sdp)
-            })
-        }
-        webSocketClient.send(message)
-    }
 
     private fun connectToRoom(username: String, room: String) {
+        currentUsername = username
+        currentRoom = room
+
         webSocketClient.connect("wss://anybet.site/ws")
         val joinMessage = JSONObject().apply {
-            put("type", "join")
-            put("username", username)
             put("room", room)
+            put("username", username)
         }
-        webSocketClient.send(joinMessage)
+        webSocketClient.sendRaw(joinMessage.toString())
     }
 
     private fun startCall() {
@@ -216,79 +226,100 @@ class MainActivity : ComponentActivity() {
             override fun onCreateSuccess(desc: SessionDescription?) {
                 desc?.let {
                     val offerMessage = JSONObject().apply {
-                        put("type", "offer")
                         put("sdp", JSONObject().apply {
                             put("type", it.type.canonicalForm())
                             put("sdp", it.description)
                         })
                     }
-                    webSocketClient.send(offerMessage)
+                    webSocketClient.sendRaw(offerMessage.toString())
+                    webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
+                        override fun onCreateSuccess(p0: SessionDescription?) {}
+                        override fun onSetSuccess() {}
+                        override fun onCreateFailure(p0: String?) {}
+                        override fun onSetFailure(p0: String?) {}
+                    }, it)
                 }
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTC", "Failed to create offer: $error")
+                Log.e("WebRTC", "Ошибка создания offer: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTC", "Failed to set offer: $error")
+                Log.e("WebRTC", "Ошибка установки offer: $error")
             }
         })
+        isCallActive = true
+    }
+
+    private fun endCall() {
+        webRTCClient.close()
+        initializeWebRTC()
+        isCallActive = false
     }
 
     private fun handleOffer(message: JSONObject) {
-        val sdp = SessionDescription(
-            SessionDescription.Type.OFFER,
-            message.getJSONObject("sdp").getString("sdp")
+        val sdp = message.getJSONObject("sdp")
+        val sessionDescription = SessionDescription(
+            SessionDescription.Type.fromCanonicalForm(sdp.getString("type")),
+            sdp.getString("sdp")
         )
-        webRTCClient.setRemoteDescription(sdp, object : SdpObserver {
-            override fun onCreateSuccess(desc: SessionDescription?) {}
+
+        webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
+            override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {
                 webRTCClient.createAnswer(object : SdpObserver {
                     override fun onCreateSuccess(desc: SessionDescription?) {
                         desc?.let {
                             val answerMessage = JSONObject().apply {
-                                put("type", "answer")
                                 put("sdp", JSONObject().apply {
                                     put("type", it.type.canonicalForm())
                                     put("sdp", it.description)
                                 })
                             }
-                            webSocketClient.send(answerMessage)
+                            webSocketClient.sendRaw(answerMessage.toString())
+                            webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
+                                override fun onCreateSuccess(p0: SessionDescription?) {}
+                                override fun onSetSuccess() {}
+                                override fun onCreateFailure(p0: String?) {}
+                                override fun onSetFailure(p0: String?) {}
+                            }, it)
                         }
                     }
                     override fun onSetSuccess() {}
                     override fun onCreateFailure(error: String?) {
-                        Log.e("WebRTC", "Failed to create answer: $error")
+                        Log.e("WebRTC", "Ошибка создания answer: $error")
                     }
                     override fun onSetFailure(error: String?) {
-                        Log.e("WebRTC", "Failed to set answer: $error")
+                        Log.e("WebRTC", "Ошибка установки answer: $error")
                     }
                 })
             }
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTC", "Failed to create offer: $error")
+                Log.e("WebRTC", "Ошибка создания remote description: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTC", "Failed to set offer: $error")
+                Log.e("WebRTC", "Ошибка установки remote description: $error")
             }
-        })
+        }, sessionDescription)
     }
 
     private fun handleAnswer(message: JSONObject) {
-        val sdp = SessionDescription(
-            SessionDescription.Type.ANSWER,
-            message.getJSONObject("sdp").getString("sdp")
+        val sdp = message.getJSONObject("sdp")
+        val sessionDescription = SessionDescription(
+            SessionDescription.Type.fromCanonicalForm(sdp.getString("type")),
+            sdp.getString("sdp")
         )
-        webRTCClient.setRemoteDescription(sdp, object : SdpObserver {
-            override fun onCreateSuccess(desc: SessionDescription?) {}
+
+        webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
+            override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTC", "Failed to create answer: $error")
+                Log.e("WebRTC", "Ошибка создания remote description: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTC", "Failed to set answer: $error")
+                Log.e("WebRTC", "Ошибка установки remote description: $error")
             }
-        })
+        }, sessionDescription)
     }
 
     private fun handleIceCandidate(message: JSONObject) {
@@ -296,12 +327,53 @@ class MainActivity : ComponentActivity() {
         val candidate = IceCandidate(
             ice.getString("sdpMid"),
             ice.getInt("sdpMLineIndex"),
-            ice.getString("sdp")
+            ice.getString("candidate")
         )
-        webRTCClient.addIceCandidate(candidate)
+        webRTCClient.peerConnection.addIceCandidate(candidate)
     }
 
+    private fun sendIceCandidate(candidate: IceCandidate) {
+        val message = JSONObject().apply {
+            put("ice", JSONObject().apply {
+                put("candidate", candidate.sdp)
+                put("sdpMid", candidate.sdpMid)
+                put("sdpMLineIndex", candidate.sdpMLineIndex)
+            })
+        }
+        webSocketClient.sendRaw(message.toString())
+    }
 
+    private fun handleWebSocketMessage(message: JSONObject) {
+        Log.d("WebSocket", "Получено сообщение: $message")
+
+        when {
+            message.has("type") -> {
+                when (message.getString("type")) {
+                    "offer" -> handleOffer(message)
+                    "answer" -> handleAnswer(message)
+                    "ice_candidate" -> handleIceCandidate(message)
+                }
+            }
+            message.has("sdp") -> {
+                if (message.getJSONObject("sdp").getString("type") == "offer") {
+                    handleOffer(message)
+                } else {
+                    handleAnswer(message)
+                }
+            }
+            message.has("ice") -> {
+                handleIceCandidate(message)
+            }
+            message.has("data") && message.getJSONObject("data").has("users") -> {
+                val users = mutableListOf<String>()
+                val usersArray = message.getJSONObject("data").getJSONArray("users")
+                for (i in 0 until usersArray.length()) {
+                    users.add(usersArray.getString(i))
+                }
+                usersInRoom = users
+            }
+        }
+    }
 
     private fun checkAllPermissionsGranted() = requiredPermissions.all {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
@@ -327,7 +399,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-                // Остальные обязательные методы Observer
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
@@ -342,18 +413,18 @@ class MainActivity : ComponentActivity() {
 
         webSocketClient = WebSocketClient(object : WebSocketListener {
             override fun onMessage(message: JSONObject) = handleWebSocketMessage(message)
-            override fun onConnected() = showToast("WebSocket connected")
-            override fun onDisconnected() = showToast("WebSocket disconnected")
-            override fun onError(error: String) = showToast("Error: $error")
+            override fun onConnected() {
+                isConnected = true
+                showToast("Подключено к серверу")
+            }
+            override fun onDisconnected() {
+                isConnected = false
+                showToast("Отключено от сервера")
+            }
+            override fun onError(error: String) {
+                showToast("Ошибка: $error")
+            }
         })
-    }
-
-    private fun handleWebSocketMessage(message: JSONObject) {
-        when (message.getString("type")) {
-            "offer" -> handleOffer(message)
-            "answer" -> handleAnswer(message)
-            "ice_candidate" -> handleIceCandidate(message)
-        }
     }
 
     private fun showToast(text: String) {
