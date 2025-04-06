@@ -1,4 +1,4 @@
-package com.example.webrtcapp
+package com.example.mytest
 
 import android.content.Context
 import android.util.Log
@@ -64,7 +64,7 @@ class WebRTCClient(
         localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK_ID", audioSource)
 
         videoCapturer = createCameraCapturer() ?: run {
-            Log.e("WebRTCApp", "Failed to create camera capturer")
+            Log.e("mytest", "Failed to create camera capturer")
             Toast.makeText(context, "Failed to initialize camera", Toast.LENGTH_LONG).show()
             return
         }
@@ -140,7 +140,7 @@ class WebRTCClient(
             peerConnection.dispose()
             peerConnectionFactory.dispose()
         } catch (e: Exception) {
-            Log.e("WebRTCApp", "Error closing WebRTCClient", e)
+            Log.e("mytest", "Error closing WebRTCClient", e)
         }
     }
 }

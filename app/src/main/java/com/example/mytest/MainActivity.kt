@@ -17,9 +17,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.example.webrtcapp.WebRTCClient
-import com.example.webrtcapp.WebSocketClient
-import com.example.webrtcapp.WebSocketListener
 import org.json.JSONObject
 import org.webrtc.*
 import androidx.compose.ui.graphics.Color
@@ -69,14 +66,14 @@ class MainActivity : ComponentActivity() {
 
     private fun setUI() {
         setContent {
-            WebRTCAppTheme {
-                WebRTCAppUI()
+            mytestTheme {
+                mytestUI()
             }
         }
     }
 
     @Composable
-    fun WebRTCAppUI() {
+    fun mytestUI() {
         var username by remember { mutableStateOf("User${(1000..9999).random()}") }
         var room by remember { mutableStateOf("room1") }
         var isConnected by remember { mutableStateOf(false) }
@@ -218,7 +215,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onAddStream(stream: MediaStream?) {
-                    Log.d("WebRTCApp", "onAddStream: ${stream?.id}")
+                    Log.d("mytest", "onAddStream: ${stream?.id}")
                     runOnUiThread {
                         stream?.videoTracks?.forEach { track ->
                             remoteVideoView?.let { track.addSink(it) }
@@ -229,7 +226,7 @@ class MainActivity : ComponentActivity() {
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                    Log.d("WebRTCApp", "IceConnectionState: $state")
+                    Log.d("mytest", "IceConnectionState: $state")
                 }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
@@ -249,33 +246,33 @@ class MainActivity : ComponentActivity() {
                                 "offer" -> handleOffer(message)
                                 "answer" -> handleAnswer(message)
                                 "ice_candidate" -> handleIceCandidate(message)
-                                "join" -> Log.d("WebRTCApp", "User joined the room")
-                                "leave" -> Log.d("WebRTCApp", "User left the room")
-                                else -> Log.w("WebRTCApp", "Unknown message type: ${message.getString("type")}")
+                                "join" -> Log.d("mytest", "User joined the room")
+                                "leave" -> Log.d("mytest", "User left the room")
+                                else -> Log.w("mytest", "Unknown message type: ${message.getString("type")}")
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e("WebRTCApp", "Error processing message", e)
+                        Log.e("mytest", "Error processing message", e)
                     }
                 }
             }
 
             override fun onConnected() {
-                Log.d("WebRTCApp", "WebSocket connected")
+                Log.d("mytest", "WebSocket connected")
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "WebSocket connected", Toast.LENGTH_SHORT).show()
                 }
             }
 
             override fun onDisconnected() {
-                Log.d("WebRTCApp", "WebSocket disconnected")
+                Log.d("mytest", "WebSocket disconnected")
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "WebSocket disconnected", Toast.LENGTH_SHORT).show()
                 }
             }
 
             override fun onError(error: String) {
-                Log.e("WebRTCApp", "WebSocket error: $error")
+                Log.e("mytest", "WebSocket error: $error")
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "WebSocket error: $error", Toast.LENGTH_SHORT).show()
                 }
@@ -306,18 +303,18 @@ class MainActivity : ComponentActivity() {
                     }
                     override fun onSetSuccess() {}
                     override fun onCreateFailure(error: String?) {
-                        Log.e("WebRTCApp", "Failed to create answer: $error")
+                        Log.e("mytest", "Failed to create answer: $error")
                     }
                     override fun onSetFailure(error: String?) {
-                        Log.e("WebRTCApp", "Failed to set answer: $error")
+                        Log.e("mytest", "Failed to set answer: $error")
                     }
                 })
             }
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTCApp", "Failed to create offer: $error")
+                Log.e("mytest", "Failed to create offer: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTCApp", "Failed to set offer: $error")
+                Log.e("mytest", "Failed to set offer: $error")
             }
         })
     }
@@ -331,10 +328,10 @@ class MainActivity : ComponentActivity() {
             override fun onCreateSuccess(desc: SessionDescription?) {}
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTCApp", "Failed to create answer: $error")
+                Log.e("mytest", "Failed to create answer: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTCApp", "Failed to set answer: $error")
+                Log.e("mytest", "Failed to set answer: $error")
             }
         })
     }
@@ -375,10 +372,10 @@ class MainActivity : ComponentActivity() {
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTCApp", "Failed to create offer: $error")
+                Log.e("mytest", "Failed to create offer: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTCApp", "Failed to set offer: $error")
+                Log.e("mytest", "Failed to set offer: $error")
             }
         })
     }
@@ -393,7 +390,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun WebRTCAppTheme(
+fun mytestTheme(
     content: @Composable () -> Unit
 ) {
     val colorScheme = lightColorScheme(
