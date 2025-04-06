@@ -24,61 +24,52 @@ class WebRTCClient(
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
+        PeerConnectionFactory.initialize(
+            PeerConnectionFactory.InitializationOptions.builder(context)
+                .setEnableInternalTracer(true)
+                .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
+                .createInitializationOptions()
+        )
+
         // Create PeerConnectionFactory with video codecs support
-        peerConnectionFactory = createPeerConnectionFactory()
-
-        // Create PeerConnection with ICE servers
-        peerConnection = createPeerConnection()
-
-        // Initialize local media streams
-        initializeLocalStream()
-    }
-
-    private fun createPeerConnectionFactory(): PeerConnectionFactory {
-        return PeerConnectionFactory.builder()
+        peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(
                 eglBase.eglBaseContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
             .createPeerConnectionFactory()
-    }
 
-    private fun createPeerConnection(): PeerConnection {
-        val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-        )
-
-        val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
+        // Create PeerConnection with ICE servers
+        val rtcConfig = PeerConnection.RTCConfiguration(listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("turn:anybet.site:3478")
+                .setUsername("username")
+                .setPassword("password")
+                .createIceServer()
+        )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceCandidatePoolSize = 1
         }
 
-        return peerConnectionFactory.createPeerConnection(rtcConfig, observer) ?:
-        throw IllegalStateException("Failed to create PeerConnection")
+        peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
+
+        // Initialize local stream
+        initializeLocalStream()
     }
 
     private fun initializeLocalStream() {
         try {
-            // Initialize views if not already initialized
-            try {
-                localView.init(eglBase.eglBaseContext, null)
-                localView.setMirror(true)
-            } catch (e: Exception) {
-                Log.d("WebRTC", "Local view already initialized")
-            }
+            // Initialize views
+            localView.init(eglBase.eglBaseContext, null)
+            localView.setMirror(true)
+            remoteView.init(eglBase.eglBaseContext, null)
 
-            try {
-                remoteView.init(eglBase.eglBaseContext, null)
-            } catch (e: Exception) {
-                Log.d("WebRTC", "Remote view already initialized")
-            }
-
-            // Create and add audio track
+            // Audio
             val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
             localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
             peerConnection.addTrack(localAudioTrack!!)
 
-            // Create and add video track
+            // Video
             videoCapturer = createCameraCapturer()?.apply {
                 val surfaceTextureHelper = SurfaceTextureHelper.create(
                     "VideoCaptureThread",
@@ -95,7 +86,6 @@ class WebRTCClient(
             }
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error initializing local stream", e)
-            throw e
         }
     }
 
