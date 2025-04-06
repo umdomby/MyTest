@@ -2,115 +2,95 @@ package com.example.mytest
 
 import android.content.Context
 import android.util.Log
-import android.widget.Toast
 import org.webrtc.*
 
 class WebRTCClient(
     private val context: Context,
-    private var observer: PeerConnection.Observer
+    private val eglBase: EglBase,
+    private val localView: SurfaceViewRenderer,
+    private val remoteView: SurfaceViewRenderer,
+    private val observer: PeerConnection.Observer
 ) {
     private val peerConnectionFactory: PeerConnectionFactory
-    private val iceServers = listOf(
-        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-    )
     private val peerConnection: PeerConnection
-    private val eglBase: EglBase = EglBase.create()
-
     private var localVideoTrack: VideoTrack? = null
-    private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: VideoCapturer? = null
-    private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     init {
-        val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
-            .setEnableInternalTracer(true)
-            .createInitializationOptions()
-        PeerConnectionFactory.initialize(initializationOptions)
+        PeerConnectionFactory.initialize(
+            PeerConnectionFactory.InitializationOptions.builder(context)
+                .setEnableInternalTracer(true)
+                .createInitializationOptions()
+        )
 
-        val options = PeerConnectionFactory.Options()
         peerConnectionFactory = PeerConnectionFactory.builder()
-            .setOptions(options)
-            .setVideoEncoderFactory(
-                DefaultVideoEncoderFactory(
-                    eglBase.eglBaseContext,
-                    true,  // enableIntelVp8Encoder
-                    true   // enableH264HighProfile
-                )
-            )
+            .setVideoEncoderFactory(DefaultVideoEncoderFactory(
+                eglBase.eglBaseContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
             .createPeerConnectionFactory()
 
-        val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
+        val rtcConfig = PeerConnection.RTCConfiguration(listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+        )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-            iceCandidatePoolSize = 1
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
+        createLocalStream()
+    }
+    fun setRemoteDescription(sdp: SessionDescription, observer: SdpObserver) {
+        peerConnection.setRemoteDescription(observer, sdp)
     }
 
-    fun setObserver(observer: PeerConnection.Observer) {
-        this.observer = observer
+    fun createAnswer(observer: SdpObserver) {
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+        }
+        peerConnection.createAnswer(observer, constraints)
     }
 
-    fun createLocalStream(localVideoOutput: SurfaceViewRenderer) {
+    fun addIceCandidate(candidate: IceCandidate) {
+        peerConnection.addIceCandidate(candidate)
+    }
+
+
+    private fun createLocalStream() {
         try {
-            Log.d("WebRTCClient", "Creating local stream...")
-            // Audio
-            val audioConstraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            // Аудио
+            val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
+            val localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
+            peerConnection.addTrack(localAudioTrack)
+
+            // Видео
+            videoCapturer = createCameraCapturer()?.apply {
+                val surfaceTextureHelper = SurfaceTextureHelper.create(
+                    "VideoCaptureThread",
+                    eglBase.eglBaseContext
+                )
+                val videoSource = peerConnectionFactory.createVideoSource(false)
+                initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
+                startCapture(640, 480, 30)
+
+                localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK", videoSource).apply {
+                    addSink(localView)
+                }
+                peerConnection.addTrack(localVideoTrack!!)
             }
-            val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
-            localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK_ID", audioSource)
-
-            // Video
-            videoCapturer = createCameraCapturer()
-            if (videoCapturer == null) {
-                Toast.makeText(context, "Failed to initialize camera", Toast.LENGTH_LONG).show()
-                return
-            }
-
-            surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
-            val videoSource = peerConnectionFactory.createVideoSource(false)
-            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
-            videoCapturer?.startCapture(640, 480, 30) // Lower resolution for better compatibility
-
-            localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK_ID", videoSource)
-            localVideoTrack?.addSink(localVideoOutput)
-
-            // Add tracks to peer connection
-            localAudioTrack?.let { peerConnection.addTrack(it) }
-            localVideoTrack?.let { peerConnection.addTrack(it) }
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error creating local stream", e)
-            Toast.makeText(context, "Error creating stream: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e("WebRTCClient", "Error creating stream", e)
         }
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
-        return try {
-            val enumerator = Camera2Enumerator(context)
-            val deviceNames = enumerator.deviceNames
-
-            for (deviceName in deviceNames) {
-                if (enumerator.isFrontFacing(deviceName)) {
-                    Log.d("WebRTCClient", "Using front-facing camera: $deviceName")
-                    return enumerator.createCapturer(deviceName, null)
-                }
+        return Camera2Enumerator(context).run {
+            deviceNames.firstOrNull { isFrontFacing(it) }?.let {
+                Log.d("WebRTC", "Using front camera: $it")
+                createCapturer(it, null)
+            } ?: deviceNames.firstOrNull()?.let {
+                Log.d("WebRTC", "Using first available camera: $it")
+                createCapturer(it, null)
             }
-
-            if (deviceNames.isNotEmpty()) {
-                Log.d("WebRTCClient", "Using default camera: ${deviceNames[0]}")
-                enumerator.createCapturer(deviceNames[0], null)
-            } else {
-                Log.e("WebRTCClient", "No cameras available")
-                null
-            }
-        } catch (e: Exception) {
-            Log.e("WebRTCClient", "Failed to create camera capturer", e)
-            null
         }
     }
 
@@ -122,32 +102,10 @@ class WebRTCClient(
         peerConnection.createOffer(sdpObserver, constraints)
     }
 
-    fun createAnswer(sdpObserver: SdpObserver) {
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-        }
-        peerConnection.createAnswer(sdpObserver, constraints)
-    }
-
-    fun setRemoteDescription(sdp: SessionDescription, sdpObserver: SdpObserver) {
-        peerConnection.setRemoteDescription(sdpObserver, sdp)
-    }
-
-    fun addIceCandidate(iceCandidate: IceCandidate) {
-        peerConnection.addIceCandidate(iceCandidate)
-    }
-
     fun close() {
-        try {
-            videoCapturer?.stopCapture()
-            videoCapturer?.dispose()
-            surfaceTextureHelper?.dispose()
-            localVideoTrack?.dispose()
-            localAudioTrack?.dispose()
-            peerConnection.dispose()
-        } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error closing resources", e)
-        }
+        videoCapturer?.stopCapture()
+        videoCapturer?.dispose()
+        localVideoTrack?.dispose()
+        peerConnection.dispose()
     }
 }

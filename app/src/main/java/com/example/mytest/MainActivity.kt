@@ -22,35 +22,46 @@ import org.webrtc.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
-
+import org.webrtc.IceCandidate
+import org.webrtc.SessionDescription
+import org.webrtc.SdpObserver
+import org.webrtc.MediaConstraints
 
 class MainActivity : ComponentActivity() {
     private lateinit var webRTCClient: WebRTCClient
     private lateinit var webSocketClient: WebSocketClient
-    private var remoteVideoView: SurfaceViewRenderer? = null
     private val eglBase = EglBase.create()
+
+    private val localView by lazy {
+        SurfaceViewRenderer(this).apply {
+            init(eglBase.eglBaseContext, null)
+            setMirror(true)
+            setEnableHardwareScaler(true)
+            setZOrderMediaOverlay(true)
+        }
+    }
+
+    private val remoteView by lazy {
+        SurfaceViewRenderer(this).apply {
+            init(eglBase.eglBaseContext, null)
+            setEnableHardwareScaler(true)
+            setZOrderMediaOverlay(true)
+        }
+    }
 
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
-        Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.MODIFY_AUDIO_SETTINGS
+        Manifest.permission.RECORD_AUDIO
     )
-
-
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = permissions.all { it.value }
-        if (allGranted) {
+        if (permissions.all { it.value }) {
             initializeWebRTC()
             setUI()
         } else {
-            Toast.makeText(
-                this,
-                "Для работы приложения необходимы все разрешения",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(this, "All permissions are required", Toast.LENGTH_LONG).show()
             finish()
         }
     }
@@ -68,66 +79,62 @@ class MainActivity : ComponentActivity() {
 
     private fun setUI() {
         setContent {
-            mytestTheme {
-                mytestUI()
+            MyAppTheme {
+                VideoCallUI()
             }
         }
     }
 
+
     @Composable
-    fun mytestUI() {
+    fun VideoCallUI() {
         var username by remember { mutableStateOf("User${(1000..9999).random()}") }
         var room by remember { mutableStateOf("room1") }
         var isConnected by remember { mutableStateOf(false) }
         var isCallActive by remember { mutableStateOf(false) }
-        var error by remember { mutableStateOf("") }
-        var connectionState by remember { mutableStateOf("Initializing...") }
         val context = LocalContext.current
 
-
-        // Инициализация SurfaceViewRenderer для локального видео
-        val localView = remember {
-            SurfaceViewRenderer(context).apply {
-                init(eglBase.eglBaseContext, null)
-                setMirror(true)
-                setEnableHardwareScaler(true)
-                setZOrderMediaOverlay(true)
-            }
-        }
-
-        // Инициализация SurfaceViewRenderer для удаленного видео
-        var remoteView by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
-
-        // Создаем локальный поток после инициализации SurfaceViewRenderer
-        LaunchedEffect(Unit) {
-            if (::webRTCClient.isInitialized) {
-                webRTCClient.createLocalStream(localView)
-            }
-        }
-
-        if (!::webRTCClient.isInitialized || !::webSocketClient.isInitialized) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            return
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            Text(
-                text = "Status: $connectionState",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            // UI элементы управления
+            ControlsSection(
+                username = username,
+                room = room,
+                isConnected = isConnected,
+                isCallActive = isCallActive,
+                onUsernameChange = { username = it },
+                onRoomChange = { room = it },
+                onConnect = {
+                    connectToRoom(username, room)
+                    isConnected = true
+                },
+                onCall = {
+                    startCall()
+                    isCallActive = true
+                }
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
+            // Видео элементы
+            VideoSection()
+        }
+    }
+
+    @Composable
+    private fun ControlsSection(
+        username: String,
+        room: String,
+        isConnected: Boolean,
+        isCallActive: Boolean,
+        onUsernameChange: (String) -> Unit,
+        onRoomChange: (String) -> Unit,
+        onConnect: () -> Unit,
+        onCall: () -> Unit
+    ) {
+        Column {
             TextField(
                 value = username,
-                onValueChange = { username = it },
+                onValueChange = onUsernameChange,
                 label = { Text("Username") },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -136,7 +143,7 @@ class MainActivity : ComponentActivity() {
 
             TextField(
                 value = room,
-                onValueChange = { room = it },
+                onValueChange = onRoomChange,
                 label = { Text("Room") },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -144,255 +151,54 @@ class MainActivity : ComponentActivity() {
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
-                onClick = {
-                    connectToRoom(username, room)
-                    isConnected = true
-                    connectionState = "Connecting..."
-                },
+                onClick = onConnect,
                 enabled = !isConnected,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(if (isConnected) "Connected" else "Connect")
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
-                onClick = {
-                    startCall()
-                    isCallActive = true
-                    connectionState = "Starting call..."
-                },
+                onClick = onCall,
                 enabled = isConnected && !isCallActive,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(if (isCallActive) "Call Active" else "Start Call")
             }
+        }
+    }
 
-            if (error.isNotEmpty()) {
-                Text(
-                    text = error,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(8.dp)
-                )
-            }
+    @Composable
+    private fun VideoSection() {
+        Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
+            // Удаленное видео (основной экран)
+            AndroidView(
+                factory = { remoteView },
+                modifier = Modifier.fillMaxSize()
+            )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Box(
+            // Локальное видео (маленькое окошко)
+            AndroidView(
+                factory = { localView },
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(300.dp)
-            ) {
-                // Локальное видео
-                AndroidView(
-                    factory = { context ->
-                        SurfaceViewRenderer(context).apply {
-                            init(eglBase.eglBaseContext, null)
-                            setMirror(true)
-                            setEnableHardwareScaler(true)
-                            setZOrderMediaOverlay(true)
-                            setZOrderOnTop(true)
-                            webRTCClient.createLocalStream(this)
-                        }
-                    },
-                    modifier = Modifier
-                        .size(120.dp)
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                )
-
-                // Удаленное видео
-                AndroidView(
-                    factory = { context ->
-                        SurfaceViewRenderer(context).apply {
-                            init(eglBase.eglBaseContext, null)
-                            setEnableHardwareScaler(true)
-                            setZOrderMediaOverlay(true)
-                            setZOrderOnTop(true)
-                            remoteVideoView = this
-
-                            webRTCClient.setObserver(object : PeerConnection.Observer {
-                                override fun onAddStream(stream: MediaStream?) {
-                                    stream?.videoTracks?.forEach { track ->
-                                        track.addSink(this@apply) // Явно используем SurfaceViewRenderer как VideoSink
-                                    }
-                                }
-                                override fun onIceCandidate(candidate: IceCandidate?) {}
-                                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
-                                override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-                                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                                    Log.d("WebRTC", "IceConnectionState: $state")
-                                }
-                                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-                                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
-                                override fun onRemoveStream(stream: MediaStream?) {}
-                                override fun onDataChannel(channel: DataChannel?) {}
-                                override fun onRenegotiationNeeded() {}
-                                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
-                            })
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+                    .size(120.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+            )
         }
     }
-
-    private fun checkAllPermissionsGranted(): Boolean {
-        return requiredPermissions.all { permission ->
-            ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    private fun sendIceCandidate(candidate: IceCandidate) {
+        val message = JSONObject().apply {
+            put("type", "ice_candidate")
+            put("ice", JSONObject().apply {
+                put("sdpMid", candidate.sdpMid)
+                put("sdpMLineIndex", candidate.sdpMLineIndex)
+                put("sdp", candidate.sdp)
+            })
         }
-    }
-
-    private fun initializeWebRTC() {
-        webRTCClient = WebRTCClient(
-            context = this,
-            observer = object : PeerConnection.Observer {
-                override fun onIceCandidate(candidate: IceCandidate?) {
-                    candidate?.let {
-                        val message = JSONObject().apply {
-                            put("type", "ice_candidate")
-                            put("ice", JSONObject().apply {
-                                put("sdpMid", it.sdpMid)
-                                put("sdpMLineIndex", it.sdpMLineIndex)
-                                put("sdp", it.sdp)
-                            })
-                        }
-                        webSocketClient.send(message)
-                    }
-                }
-
-                override fun onAddStream(stream: MediaStream?) {
-                    Log.d("mytest", "onAddStream: ${stream?.id}")
-                    runOnUiThread {
-                        stream?.videoTracks?.forEach { track ->
-                            remoteVideoView?.let { track.addSink(it) }
-                        }
-                    }
-                }
-
-                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
-                override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                    Log.d("mytest", "IceConnectionState: $state")
-                }
-                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
-                override fun onRemoveStream(stream: MediaStream?) {}
-                override fun onDataChannel(channel: DataChannel?) {}
-                override fun onRenegotiationNeeded() {}
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
-            }
-        )
-
-        webSocketClient = WebSocketClient(object : WebSocketListener {
-            override fun onMessage(message: JSONObject) {
-                runOnUiThread {
-                    try {
-                        if (message.has("type")) {
-                            when (message.getString("type")) {
-                                "offer" -> handleOffer(message)
-                                "answer" -> handleAnswer(message)
-                                "ice_candidate" -> handleIceCandidate(message)
-                                "join" -> Log.d("mytest", "User joined the room")
-                                "leave" -> Log.d("mytest", "User left the room")
-                                else -> Log.w("mytest", "Unknown message type: ${message.getString("type")}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("mytest", "Error processing message", e)
-                    }
-                }
-            }
-
-            override fun onConnected() {
-                Log.d("mytest", "WebSocket connected")
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "WebSocket connected", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            override fun onDisconnected() {
-                Log.d("mytest", "WebSocket disconnected")
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "WebSocket disconnected", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            override fun onError(error: String) {
-                Log.e("mytest", "WebSocket error: $error")
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "WebSocket error: $error", Toast.LENGTH_SHORT).show()
-                }
-            }
-        })
-    }
-
-    private fun handleOffer(message: JSONObject) {
-        val sdp = SessionDescription(
-            SessionDescription.Type.OFFER,
-            message.getJSONObject("sdp").getString("sdp")
-        )
-        webRTCClient.setRemoteDescription(sdp, object : SdpObserver {
-            override fun onCreateSuccess(desc: SessionDescription?) {}
-            override fun onSetSuccess() {
-                webRTCClient.createAnswer(object : SdpObserver {
-                    override fun onCreateSuccess(desc: SessionDescription?) {
-                        desc?.let {
-                            val answerMessage = JSONObject().apply {
-                                put("type", "answer")
-                                put("sdp", JSONObject().apply {
-                                    put("type", it.type.canonicalForm())
-                                    put("sdp", it.description)
-                                })
-                            }
-                            webSocketClient.send(answerMessage)
-                        }
-                    }
-                    override fun onSetSuccess() {}
-                    override fun onCreateFailure(error: String?) {
-                        Log.e("mytest", "Failed to create answer: $error")
-                    }
-                    override fun onSetFailure(error: String?) {
-                        Log.e("mytest", "Failed to set answer: $error")
-                    }
-                })
-            }
-            override fun onCreateFailure(error: String?) {
-                Log.e("mytest", "Failed to create offer: $error")
-            }
-            override fun onSetFailure(error: String?) {
-                Log.e("mytest", "Failed to set offer: $error")
-            }
-        })
-    }
-
-    private fun handleAnswer(message: JSONObject) {
-        val sdp = SessionDescription(
-            SessionDescription.Type.ANSWER,
-            message.getJSONObject("sdp").getString("sdp")
-        )
-        webRTCClient.setRemoteDescription(sdp, object : SdpObserver {
-            override fun onCreateSuccess(desc: SessionDescription?) {}
-            override fun onSetSuccess() {}
-            override fun onCreateFailure(error: String?) {
-                Log.e("mytest", "Failed to create answer: $error")
-            }
-            override fun onSetFailure(error: String?) {
-                Log.e("mytest", "Failed to set answer: $error")
-            }
-        })
-    }
-
-    private fun handleIceCandidate(message: JSONObject) {
-        val ice = message.getJSONObject("ice")
-        val candidate = IceCandidate(
-            ice.getString("sdpMid"),
-            ice.getInt("sdpMLineIndex"),
-            ice.getString("sdp")
-        )
-        webRTCClient.addIceCandidate(candidate)
+        webSocketClient.send(message)
     }
 
     private fun connectToRoom(username: String, room: String) {
@@ -421,36 +227,156 @@ class MainActivity : ComponentActivity() {
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("mytest", "Failed to create offer: $error")
+                Log.e("WebRTC", "Failed to create offer: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("mytest", "Failed to set offer: $error")
+                Log.e("WebRTC", "Failed to set offer: $error")
             }
         })
+    }
+
+    private fun handleOffer(message: JSONObject) {
+        val sdp = SessionDescription(
+            SessionDescription.Type.OFFER,
+            message.getJSONObject("sdp").getString("sdp")
+        )
+        webRTCClient.setRemoteDescription(sdp, object : SdpObserver {
+            override fun onCreateSuccess(desc: SessionDescription?) {}
+            override fun onSetSuccess() {
+                webRTCClient.createAnswer(object : SdpObserver {
+                    override fun onCreateSuccess(desc: SessionDescription?) {
+                        desc?.let {
+                            val answerMessage = JSONObject().apply {
+                                put("type", "answer")
+                                put("sdp", JSONObject().apply {
+                                    put("type", it.type.canonicalForm())
+                                    put("sdp", it.description)
+                                })
+                            }
+                            webSocketClient.send(answerMessage)
+                        }
+                    }
+                    override fun onSetSuccess() {}
+                    override fun onCreateFailure(error: String?) {
+                        Log.e("WebRTC", "Failed to create answer: $error")
+                    }
+                    override fun onSetFailure(error: String?) {
+                        Log.e("WebRTC", "Failed to set answer: $error")
+                    }
+                })
+            }
+            override fun onCreateFailure(error: String?) {
+                Log.e("WebRTC", "Failed to create offer: $error")
+            }
+            override fun onSetFailure(error: String?) {
+                Log.e("WebRTC", "Failed to set offer: $error")
+            }
+        })
+    }
+
+    private fun handleAnswer(message: JSONObject) {
+        val sdp = SessionDescription(
+            SessionDescription.Type.ANSWER,
+            message.getJSONObject("sdp").getString("sdp")
+        )
+        webRTCClient.setRemoteDescription(sdp, object : SdpObserver {
+            override fun onCreateSuccess(desc: SessionDescription?) {}
+            override fun onSetSuccess() {}
+            override fun onCreateFailure(error: String?) {
+                Log.e("WebRTC", "Failed to create answer: $error")
+            }
+            override fun onSetFailure(error: String?) {
+                Log.e("WebRTC", "Failed to set answer: $error")
+            }
+        })
+    }
+
+    private fun handleIceCandidate(message: JSONObject) {
+        val ice = message.getJSONObject("ice")
+        val candidate = IceCandidate(
+            ice.getString("sdpMid"),
+            ice.getInt("sdpMLineIndex"),
+            ice.getString("sdp")
+        )
+        webRTCClient.addIceCandidate(candidate)
+    }
+
+
+
+    private fun checkAllPermissionsGranted() = requiredPermissions.all {
+        ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun initializeWebRTC() {
+        webRTCClient = WebRTCClient(
+            context = this,
+            eglBase = eglBase,
+            localView = localView,
+            remoteView = remoteView,
+            observer = object : PeerConnection.Observer {
+                override fun onIceCandidate(candidate: IceCandidate?) {
+                    candidate?.let { sendIceCandidate(it) }
+                }
+                override fun onAddStream(stream: MediaStream?) {
+                    stream?.videoTracks?.firstOrNull()?.addSink(remoteView)
+                }
+                override fun onTrack(transceiver: RtpTransceiver?) {
+                    transceiver?.receiver?.track()?.let { track ->
+                        if (track.kind() == "video") {
+                            (track as VideoTrack).addSink(remoteView)
+                        }
+                    }
+                }
+                // Остальные обязательные методы Observer
+                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
+                override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
+                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+                override fun onRemoveStream(stream: MediaStream?) {}
+                override fun onDataChannel(channel: DataChannel?) {}
+                override fun onRenegotiationNeeded() {}
+                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+            }
+        )
+
+        webSocketClient = WebSocketClient(object : WebSocketListener {
+            override fun onMessage(message: JSONObject) = handleWebSocketMessage(message)
+            override fun onConnected() = showToast("WebSocket connected")
+            override fun onDisconnected() = showToast("WebSocket disconnected")
+            override fun onError(error: String) = showToast("Error: $error")
+        })
+    }
+
+    private fun handleWebSocketMessage(message: JSONObject) {
+        when (message.getString("type")) {
+            "offer" -> handleOffer(message)
+            "answer" -> handleAnswer(message)
+            "ice_candidate" -> handleIceCandidate(message)
+        }
+    }
+
+    private fun showToast(text: String) {
+        runOnUiThread { Toast.makeText(this, text, Toast.LENGTH_SHORT).show() }
     }
 
     override fun onDestroy() {
         webSocketClient.disconnect()
         webRTCClient.close()
         eglBase.release()
-        remoteVideoView?.release()
+        localView.release()
+        remoteView.release()
         super.onDestroy()
     }
 }
 
 @Composable
-fun mytestTheme(
-    content: @Composable () -> Unit
-) {
-    val colorScheme = lightColorScheme(
-        primary = Color(0xFF6200EE),
-        secondary = Color(0xFF03DAC6),
-        surface = Color(0xFFFFFFFF),
-        onSurface = Color(0xFF000000)
-    )
-
+fun MyAppTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = lightColorScheme(
+            primary = Color(0xFF6200EE),
+            secondary = Color(0xFF03DAC6)
+        ),
         content = content
     )
 }
