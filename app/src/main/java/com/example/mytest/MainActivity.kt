@@ -7,6 +7,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.registerForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -19,9 +20,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.*
+
 
 class MainActivity : ComponentActivity() {
     private lateinit var webRTCClient: WebRTCClient
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
     private var isConnected by mutableStateOf(false)
     private var isCallActive by mutableStateOf(false)
     private var usersInRoom by mutableStateOf(emptyList<String>())
+    private var errorMessage by mutableStateOf("")
 
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
@@ -63,7 +65,7 @@ class MainActivity : ComponentActivity() {
             initializeWebRTC()
             setUI()
         } else {
-            showToast("All permissions are required")
+            showToast("Camera and microphone permissions required")
             finish()
         }
     }
@@ -81,13 +83,15 @@ class MainActivity : ComponentActivity() {
 
     private fun setUI() {
         setContent {
-            AppTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    VideoCallUI()
-                }
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = Color(0xFFBB86FC),
+                    secondary = Color(0xFF03DAC6),
+                    surface = Color(0xFF121212),
+                    onSurface = Color.White
+                )
+            ) {
+                VideoCallUI()
             }
         }
     }
@@ -100,9 +104,10 @@ class MainActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
                 .padding(16.dp)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
+            // Video container
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -125,77 +130,106 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Controls
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(16.dp)
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Status: ${if (isConnected) "Connected" else "Disconnected"}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
+                // Используем OutlinedTextField с правильными цветами
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
                     label = { Text("Username") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = Color.Gray,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
+                        unfocusedLabelColor = Color.Gray
+                    )
                 )
-
-                Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = room,
                     onValueChange = { room = it },
                     label = { Text("Room") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = Color.Gray,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
+                        unfocusedLabelColor = Color.Gray
+                    )
                 )
-
-                Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
                     onClick = { connectToRoom(username, room) },
                     enabled = !isConnected,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.Black
+                    )
                 ) {
                     Text(if (isConnected) "Connected" else "Connect")
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
                 if (isConnected) {
-                    if (!isCallActive) {
-                        Button(
-                            onClick = { startCall() },
-                            enabled = usersInRoom.size > 1,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Start Call")
-                        }
-                    } else {
-                        Button(
-                            onClick = { endCall() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error,
-                                contentColor = MaterialTheme.colorScheme.onError
-                            )
-                        ) {
-                            Text("End Call")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (!isCallActive) {
+                            Button(
+                                onClick = { startCall() },
+                                enabled = usersInRoom.size > 1,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary,
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Text("Start Call")
+                            }
+                        } else {
+                            Button(
+                                onClick = { endCall() },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Text("End Call")
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
                 if (usersInRoom.isNotEmpty()) {
-                    Text("Users in room (${usersInRoom.size}):")
-                    usersInRoom.forEach { user ->
-                        Text("- $user")
+                    Text(
+                        "Users in room (${usersInRoom.size}):",
+                        color = Color.White
+                    )
+                    Column {
+                        usersInRoom.forEach { user ->
+                            Text(
+                                "- $user",
+                                color = Color.White
+                            )
+                        }
                     }
+                }
+
+                if (errorMessage.isNotEmpty()) {
+                    Text(
+                        errorMessage,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
         }
@@ -204,19 +238,27 @@ class MainActivity : ComponentActivity() {
     private fun connectToRoom(username: String, room: String) {
         currentUsername = username
         currentRoom = room
-        webSocketClient.connect("wss://anybet.site/ws")
-        val joinMessage = JSONObject().apply {
-            put("room", room)
-            put("username", username)
+        errorMessage = ""
+
+        try {
+            webSocketClient.connect("wss://anybet.site/ws")
+            val joinMessage = JSONObject().apply {
+                put("room", room)
+                put("username", username)
+            }
+            webSocketClient.sendRaw(joinMessage.toString())
+        } catch (e: Exception) {
+            errorMessage = "Connection error: ${e.message}"
         }
-        webSocketClient.sendRaw(joinMessage.toString())
     }
 
     private fun startCall() {
+        errorMessage = ""
         webRTCClient.createOffer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {
                 desc?.let {
                     val offerMessage = JSONObject().apply {
+                        put("type", "offer")
                         put("sdp", JSONObject().apply {
                             put("type", it.type.canonicalForm())
                             put("sdp", it.description)
@@ -233,9 +275,11 @@ class MainActivity : ComponentActivity() {
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
+                errorMessage = "Offer creation failed: $error"
                 Log.e("WebRTC", "Create offer error: $error")
             }
             override fun onSetFailure(error: String?) {
+                errorMessage = "Offer setup failed: $error"
                 Log.e("WebRTC", "Set offer error: $error")
             }
         })
@@ -243,6 +287,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun endCall() {
+        errorMessage = ""
         webRTCClient.close()
         initializeWebRTC()
         isCallActive = false
@@ -262,6 +307,7 @@ class MainActivity : ComponentActivity() {
                     override fun onCreateSuccess(desc: SessionDescription?) {
                         desc?.let {
                             val answerMessage = JSONObject().apply {
+                                put("type", "answer")
                                 put("sdp", JSONObject().apply {
                                     put("type", it.type.canonicalForm())
                                     put("sdp", it.description)
@@ -278,17 +324,21 @@ class MainActivity : ComponentActivity() {
                     }
                     override fun onSetSuccess() {}
                     override fun onCreateFailure(error: String?) {
+                        errorMessage = "Answer creation failed: $error"
                         Log.e("WebRTC", "Create answer error: $error")
                     }
                     override fun onSetFailure(error: String?) {
+                        errorMessage = "Answer setup failed: $error"
                         Log.e("WebRTC", "Set answer error: $error")
                     }
                 })
             }
             override fun onCreateFailure(error: String?) {
+                errorMessage = "Remote description failed: $error"
                 Log.e("WebRTC", "Create remote description error: $error")
             }
             override fun onSetFailure(error: String?) {
+                errorMessage = "Remote setup failed: $error"
                 Log.e("WebRTC", "Set remote description error: $error")
             }
         }, sessionDescription)
@@ -305,9 +355,11 @@ class MainActivity : ComponentActivity() {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
+                errorMessage = "Remote description failed: $error"
                 Log.e("WebRTC", "Create remote description error: $error")
             }
             override fun onSetFailure(error: String?) {
+                errorMessage = "Remote setup failed: $error"
                 Log.e("WebRTC", "Set remote description error: $error")
             }
         }, sessionDescription)
@@ -325,6 +377,7 @@ class MainActivity : ComponentActivity() {
 
     private fun sendIceCandidate(candidate: IceCandidate) {
         val message = JSONObject().apply {
+            put("type", "ice_candidate")
             put("ice", JSONObject().apply {
                 put("candidate", candidate.sdp)
                 put("sdpMid", candidate.sdpMid)
@@ -338,11 +391,19 @@ class MainActivity : ComponentActivity() {
         Log.d("WebSocket", "Received: $message")
 
         when {
-            message.has("type") -> {
-                when (message.getString("type")) {
-                    "offer" -> handleOffer(message)
-                    "answer" -> handleAnswer(message)
-                    "ice_candidate" -> handleIceCandidate(message)
+            message.has("type") -> when (message.getString("type")) {
+                "offer" -> handleOffer(message)
+                "answer" -> handleAnswer(message)
+                "ice_candidate" -> handleIceCandidate(message)
+                "error" -> errorMessage = message.getString("message")
+                "room_info" -> {
+                    val users = mutableListOf<String>()
+                    message.getJSONObject("data").getJSONArray("users").let { usersArray ->
+                        for (i in 0 until usersArray.length()) {
+                            users.add(usersArray.getString(i))
+                        }
+                    }
+                    usersInRoom = users
                 }
             }
             message.has("sdp") -> {
@@ -352,17 +413,7 @@ class MainActivity : ComponentActivity() {
                     handleAnswer(message)
                 }
             }
-            message.has("ice") -> {
-                handleIceCandidate(message)
-            }
-            message.has("data") && message.getJSONObject("data").has("users") -> {
-                val users = mutableListOf<String>()
-                val usersArray = message.getJSONObject("data").getJSONArray("users")
-                for (i in 0 until usersArray.length()) {
-                    users.add(usersArray.getString(i))
-                }
-                usersInRoom = users
-            }
+            message.has("ice") -> handleIceCandidate(message)
         }
     }
 
@@ -392,7 +443,11 @@ class MainActivity : ComponentActivity() {
                 }
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
+                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                    if (state == PeerConnection.IceConnectionState.DISCONNECTED) {
+                        runOnUiThread { endCall() }
+                    }
+                }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
                 override fun onRemoveStream(stream: MediaStream?) {}
@@ -411,8 +466,10 @@ class MainActivity : ComponentActivity() {
             override fun onDisconnected() {
                 isConnected = false
                 showToast("Disconnected from server")
+                runOnUiThread { endCall() }
             }
             override fun onError(error: String) {
+                errorMessage = error
                 showToast("Error: $error")
             }
         })
@@ -430,46 +487,4 @@ class MainActivity : ComponentActivity() {
         remoteView.release()
         super.onDestroy()
     }
-}
-
-@Composable
-fun AppTheme(
-    darkTheme: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = if (darkTheme) {
-        darkColorScheme(
-            primary = Color(0xFFBB86FC),
-            secondary = Color(0xFF03DAC6),
-            tertiary = Color(0xFF3700B3),
-            background = Color(0xFF121212),
-            surface = Color(0xFF1E1E1E),
-            surfaceVariant = Color(0xFF2D2D2D),
-            onPrimary = Color.Black,
-            onSecondary = Color.Black,
-            onBackground = Color.White,
-            onSurface = Color.White,
-            onSurfaceVariant = Color(0xFFBBBBBB)
-        )
-    } else {
-        lightColorScheme(
-            primary = Color(0xFF6200EE),
-            secondary = Color(0xFF03DAC6),
-            tertiary = Color(0xFF3700B3),
-            background = Color.White,
-            surface = Color(0xFFFFFFFF),
-            surfaceVariant = Color(0xFFEEEEEE),
-            onPrimary = Color.White,
-            onSecondary = Color.Black,
-            onBackground = Color.Black,
-            onSurface = Color.Black,
-            onSurfaceVariant = Color(0xFF444444)
-        )
-    }
-
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography(),
-        content = content
-    )
 }
