@@ -56,25 +56,20 @@ class WebRTCClient(
     fun createLocalStream(localVideoOutput: SurfaceViewRenderer) {
         try {
             // Audio
-            val audioConstraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
-            }
-            val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
+            val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
             localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK_ID", audioSource)
 
             // Video
             videoCapturer = createCameraCapturer()
             if (videoCapturer == null) {
-                Toast.makeText(context, "Failed to initialize camera", Toast.LENGTH_LONG).show()
+                Log.e("WebRTCClient", "Failed to create video capturer")
                 return
             }
 
             surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
             val videoSource = peerConnectionFactory.createVideoSource(false)
             videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
-            videoCapturer?.startCapture(640, 480, 30) // Lower resolution for better compatibility
+            videoCapturer?.startCapture(640, 480, 30)
 
             localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK_ID", videoSource)
             localVideoTrack?.addSink(localVideoOutput)
@@ -82,9 +77,10 @@ class WebRTCClient(
             // Add tracks to peer connection
             localAudioTrack?.let { peerConnection.addTrack(it) }
             localVideoTrack?.let { peerConnection.addTrack(it) }
+
+            Log.d("WebRTCClient", "Local stream created successfully")
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error creating local stream", e)
-            Toast.makeText(context, "Error creating stream: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -95,13 +91,16 @@ class WebRTCClient(
 
             for (deviceName in deviceNames) {
                 if (enumerator.isFrontFacing(deviceName)) {
+                    Log.d("WebRTCClient", "Using front-facing camera: $deviceName")
                     return enumerator.createCapturer(deviceName, null)
                 }
             }
 
             if (deviceNames.isNotEmpty()) {
+                Log.d("WebRTCClient", "Using first available camera: ${deviceNames[0]}")
                 enumerator.createCapturer(deviceNames[0], null)
             } else {
+                Log.e("WebRTCClient", "No camera devices found")
                 null
             }
         } catch (e: Exception) {

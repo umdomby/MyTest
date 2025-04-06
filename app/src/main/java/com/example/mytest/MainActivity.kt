@@ -84,6 +84,27 @@ class MainActivity : ComponentActivity() {
         var connectionState by remember { mutableStateOf("Initializing...") }
         val context = LocalContext.current
 
+
+        // Инициализация SurfaceViewRenderer для локального видео
+        val localView = remember {
+            SurfaceViewRenderer(context).apply {
+                init(eglBase.eglBaseContext, null)
+                setMirror(true)
+                setEnableHardwareScaler(true)
+                setZOrderMediaOverlay(true)
+            }
+        }
+
+        // Инициализация SurfaceViewRenderer для удаленного видео
+        var remoteView by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
+
+        // Создаем локальный поток после инициализации SurfaceViewRenderer
+        LaunchedEffect(Unit) {
+            if (::webRTCClient.isInitialized) {
+                webRTCClient.createLocalStream(localView)
+            }
+        }
+
         if (!::webRTCClient.isInitialized || !::webSocketClient.isInitialized) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
