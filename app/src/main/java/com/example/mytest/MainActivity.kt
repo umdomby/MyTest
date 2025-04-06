@@ -8,18 +8,19 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import org.webrtc.*
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 
@@ -81,7 +82,14 @@ class MainActivity : ComponentActivity() {
 
     private fun setUI() {
         setContent {
-            MyAppTheme {
+            MaterialTheme(
+                colorScheme = lightColorScheme(
+                    primary = Color(0xFF6200EE),
+                    secondary = Color(0xFF03DAC6),
+                    surface = Color.White,
+                    onSurface = Color.Black
+                )
+            ) {
                 VideoCallUI()
             }
         }
@@ -91,121 +99,91 @@ class MainActivity : ComponentActivity() {
     fun VideoCallUI() {
         var username by remember { mutableStateOf("User${(1000..9999).random()}") }
         var room by remember { mutableStateOf("room1") }
-        val context = LocalContext.current
 
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            ControlsSection(
-                username = username,
-                room = room,
-                isConnected = isConnected,
-                isCallActive = isCallActive,
-                usersInRoom = usersInRoom,
-                onUsernameChange = { username = it },
-                onRoomChange = { room = it },
-                onConnect = {
-                    connectToRoom(username, room)
-                },
-                onCall = {
-                    startCall()
-                },
-                onEndCall = {
-                    endCall()
-                }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            VideoSection()
-        }
-    }
-
-    @Composable
-    private fun ControlsSection(
-        username: String,
-        room: String,
-        isConnected: Boolean,
-        isCallActive: Boolean,
-        usersInRoom: List<String>,
-        onUsernameChange: (String) -> Unit,
-        onRoomChange: (String) -> Unit,
-        onConnect: () -> Unit,
-        onCall: () -> Unit,
-        onEndCall: () -> Unit
-    ) {
-        Column {
-            TextField(
-                value = username,
-                onValueChange = onUsernameChange,
-                label = { Text("Имя пользователя") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            TextField(
-                value = room,
-                onValueChange = onRoomChange,
-                label = { Text("Комната") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = onConnect,
-                enabled = !isConnected,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (isConnected) "Подключено" else "Подключиться")
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (isConnected) {
-                if (!isCallActive) {
-                    Button(
-                        onClick = onCall,
-                        enabled = usersInRoom.size > 1,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Начать звонок")
-                    }
-                } else {
-                    Button(
-                        onClick = onEndCall,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Завершить звонок")
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            if (usersInRoom.isNotEmpty()) {
-                Text("Участники в комнате (${usersInRoom.size}):", style = MaterialTheme.typography.bodyMedium)
-                usersInRoom.forEach { user ->
-                    Text("- $user", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun VideoSection() {
-        Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
-            AndroidView(
-                factory = { remoteView },
-                modifier = Modifier.fillMaxSize()
-            )
-
-            AndroidView(
-                factory = { localView },
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Video container
+            Box(
                 modifier = Modifier
-                    .size(120.dp)
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-            )
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color.Black)
+            ) {
+                AndroidView(
+                    factory = { remoteView },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                AndroidView(
+                    factory = { localView },
+                    modifier = Modifier
+                        .size(120.dp)
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Controls
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Username") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = room,
+                    onValueChange = { room = it },
+                    label = { Text("Room") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Button(
+                    onClick = { connectToRoom(username, room) },
+                    enabled = !isConnected,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isConnected) "Connected" else "Connect")
+                }
+
+                if (isConnected) {
+                    if (!isCallActive) {
+                        Button(
+                            onClick = { startCall() },
+                            enabled = usersInRoom.size > 1,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Start Call")
+                        }
+                    } else {
+                        Button(
+                            onClick = { endCall() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("End Call")
+                        }
+                    }
+                }
+
+                if (usersInRoom.isNotEmpty()) {
+                    Text("Users in room (${usersInRoom.size}):")
+                    usersInRoom.forEach { user ->
+                        Text("- $user")
+                    }
+                }
+            }
         }
     }
 
@@ -242,10 +220,10 @@ class MainActivity : ComponentActivity() {
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTC", "Ошибка создания offer: $error")
+                Log.e("WebRTC", "Create offer error: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTC", "Ошибка установки offer: $error")
+                Log.e("WebRTC", "Set offer error: $error")
             }
         })
         isCallActive = true
@@ -287,18 +265,18 @@ class MainActivity : ComponentActivity() {
                     }
                     override fun onSetSuccess() {}
                     override fun onCreateFailure(error: String?) {
-                        Log.e("WebRTC", "Ошибка создания answer: $error")
+                        Log.e("WebRTC", "Create answer error: $error")
                     }
                     override fun onSetFailure(error: String?) {
-                        Log.e("WebRTC", "Ошибка установки answer: $error")
+                        Log.e("WebRTC", "Set answer error: $error")
                     }
                 })
             }
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTC", "Ошибка создания remote description: $error")
+                Log.e("WebRTC", "Create remote description error: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTC", "Ошибка установки remote description: $error")
+                Log.e("WebRTC", "Set remote description error: $error")
             }
         }, sessionDescription)
     }
@@ -314,10 +292,10 @@ class MainActivity : ComponentActivity() {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                Log.e("WebRTC", "Ошибка создания remote description: $error")
+                Log.e("WebRTC", "Create remote description error: $error")
             }
             override fun onSetFailure(error: String?) {
-                Log.e("WebRTC", "Ошибка установки remote description: $error")
+                Log.e("WebRTC", "Set remote description error: $error")
             }
         }, sessionDescription)
     }
@@ -344,7 +322,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleWebSocketMessage(message: JSONObject) {
-        Log.d("WebSocket", "Получено сообщение: $message")
+        Log.d("WebSocket", "Received: $message")
 
         when {
             message.has("type") -> {
@@ -415,14 +393,14 @@ class MainActivity : ComponentActivity() {
             override fun onMessage(message: JSONObject) = handleWebSocketMessage(message)
             override fun onConnected() {
                 isConnected = true
-                showToast("Подключено к серверу")
+                showToast("Connected to server")
             }
             override fun onDisconnected() {
                 isConnected = false
-                showToast("Отключено от сервера")
+                showToast("Disconnected from server")
             }
             override fun onError(error: String) {
-                showToast("Ошибка: $error")
+                showToast("Error: $error")
             }
         })
     }
@@ -439,15 +417,4 @@ class MainActivity : ComponentActivity() {
         remoteView.release()
         super.onDestroy()
     }
-}
-
-@Composable
-fun MyAppTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF6200EE),
-            secondary = Color(0xFF03DAC6)
-        ),
-        content = content
-    )
 }

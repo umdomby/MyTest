@@ -25,27 +25,27 @@ class WebSocketClient(private val listener: WebSocketListener) {
 
         webSocket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d("WebSocket", "Соединение открыто")
+                Log.d("WebSocket", "Connection opened")
                 listener.onConnected()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
-                    Log.d("WebSocket", "Получено сообщение: $text")
+                    Log.d("WebSocket", "Received: $text")
                     listener.onMessage(JSONObject(text))
                 } catch (e: Exception) {
-                    listener.onError("Ошибка парсинга сообщения: ${e.message}")
+                    listener.onError("Parse error: ${e.message}")
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d("WebSocket", "Соединение закрыто: $reason")
+                Log.d("WebSocket", "Connection closed: $reason")
                 listener.onDisconnected()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e("WebSocket", "Ошибка соединения", t)
-                listener.onError(t.message ?: "Неизвестная ошибка")
+                Log.e("WebSocket", "Connection error", t)
+                listener.onError(t.message ?: "Unknown error")
             }
         })
     }
@@ -59,7 +59,7 @@ class WebSocketClient(private val listener: WebSocketListener) {
     }
 
     fun disconnect() {
-        webSocket?.close(1000, "Нормальное закрытие")
+        webSocket?.close(1000, "Normal closure")
         client.dispatcher.executorService.shutdown()
     }
 }

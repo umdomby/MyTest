@@ -65,12 +65,12 @@ class WebRTCClient(
 
     private fun createLocalStream() {
         try {
-            // Аудио
+            // Audio
             val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
             val localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
             peerConnection.addTrack(localAudioTrack)
 
-            // Видео
+            // Video
             videoCapturer = createCameraCapturer()?.apply {
                 val surfaceTextureHelper = SurfaceTextureHelper.create(
                     "VideoCaptureThread",
@@ -86,17 +86,17 @@ class WebRTCClient(
                 peerConnection.addTrack(localVideoTrack!!)
             }
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Ошибка создания потока", e)
+            Log.e("WebRTCClient", "Stream creation error", e)
         }
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
         return Camera2Enumerator(context).run {
             deviceNames.firstOrNull { isFrontFacing(it) }?.let {
-                Log.d("WebRTC", "Используется фронтальная камера: $it")
+                Log.d("WebRTC", "Using front camera: $it")
                 createCapturer(it, null)
             } ?: deviceNames.firstOrNull()?.let {
-                Log.d("WebRTC", "Используется первая доступная камера: $it")
+                Log.d("WebRTC", "Using first available camera: $it")
                 createCapturer(it, null)
             }
         }
