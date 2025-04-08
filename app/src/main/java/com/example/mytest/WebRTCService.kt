@@ -32,7 +32,9 @@ class WebRTCService : Service() {
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val iceServers = listOf(
-        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+        PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+        PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+        PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
     )
 
     // WebSocket
