@@ -7,7 +7,6 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.registerForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,7 +21,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import org.webrtc.*
-
 
 class MainActivity : ComponentActivity() {
     private lateinit var webRTCClient: WebRTCClient
@@ -107,7 +105,6 @@ class MainActivity : ComponentActivity() {
                 .padding(16.dp)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            // Video container
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -130,12 +127,10 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Controls
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Используем OutlinedTextField с правильными цветами
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
