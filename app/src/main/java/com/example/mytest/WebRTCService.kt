@@ -1,5 +1,6 @@
 package com.example.mytest
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -14,8 +15,6 @@ import okhttp3.*
 import org.json.JSONObject
 import org.webrtc.*
 import java.util.concurrent.TimeUnit
-import android.os.Build
-import android.annotation.SuppressLint
 
 class WebRTCService : Service() {
     private val binder = LocalBinder()
@@ -30,6 +29,7 @@ class WebRTCService : Service() {
     private var localAudioTrack: AudioTrack? = null
     private var localVideoTrack: VideoTrack? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    private var videoSource: VideoSource? = null
 
     // Configuration
     private val roomName = "room1"
@@ -58,18 +58,16 @@ class WebRTCService : Service() {
     @SuppressLint("ForegroundServiceType")
     override fun onCreate() {
         super.onCreate()
+        Log.d("WebRTCService", "Service onCreate")
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(notificationId, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(notificationId, createNotification())
-        }
+        startForeground(notificationId, createNotification())
 
         initializeWebRTC()
         connectWebSocket()
     }
 
     private fun initializeWebRTC() {
+        Log.d("WebRTCService", "Initializing WebRTC")
         eglBase = EglBase.create()
 
         PeerConnectionFactory.initialize(
@@ -79,39 +77,94 @@ class WebRTCService : Service() {
                 .createInitializationOptions()
         )
 
-        val options = PeerConnectionFactory.Options().apply {
-            disableEncryption = false
-            disableNetworkMonitor = false
-        }
+        val videoEncoderFactory = DefaultVideoEncoderFactory(
+            eglBase.eglBaseContext,
+            true,
+            true
+        )
+
+        val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
         peerConnectionFactory = PeerConnectionFactory.builder()
-            .setOptions(options)
+            .setVideoEncoderFactory(videoEncoderFactory)
+            .setVideoDecoderFactory(videoDecoderFactory)
             .createPeerConnectionFactory()
 
         createLocalTracks()
     }
 
     private fun createLocalTracks() {
+        Log.d("WebRTCService", "Creating local tracks")
+
         // Audio
         val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
         localAudioTrack = peerConnectionFactory.createAudioTrack("audio_track_$userName", audioSource)
 
         // Video
-        videoCapturer = createCameraCapturer()
-        videoCapturer?.let { capturer ->
-            val videoSource = peerConnectionFactory.createVideoSource(false)
-            surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
-            capturer.initialize(surfaceTextureHelper, applicationContext, videoSource.capturerObserver)
-            capturer.startCapture(1280, 720, 30)
+        try {
+            videoCapturer = createCameraCapturer()
+            videoCapturer?.let { capturer ->
+                videoSource = peerConnectionFactory.createVideoSource(false)
+                surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
 
-            localVideoTrack = peerConnectionFactory.createVideoTrack("video_track_$userName", videoSource)
-            Log.d("WebRTCService", "Video track created and capturer started")
-        } ?: run {
-            Log.e("WebRTCService", "Failed to create video capturer")
+                capturer.initialize(surfaceTextureHelper, this, videoSource?.capturerObserver)
+                capturer.startCapture(1280, 720, 30)
+
+                localVideoTrack = peerConnectionFactory.createVideoTrack("video_track_$userName", videoSource)
+                Log.d("WebRTCService", "Video track created and capturer started")
+            } ?: run {
+                Log.e("WebRTCService", "Failed to create video capturer")
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error initializing camera", e)
+            videoCapturer = null
+        }
+    }
+
+    private fun createCameraCapturer(): VideoCapturer? {
+        return try {
+            val cameraEnumerator = Camera2Enumerator(this)
+            val deviceNames = cameraEnumerator.deviceNames
+
+            deviceNames.find { cameraEnumerator.isFrontFacing(it) }?.let { cameraName ->
+                Log.d("WebRTCService", "Using front camera: $cameraName")
+                cameraEnumerator.createCapturer(cameraName, null)
+            } ?: deviceNames.firstOrNull()?.let { cameraName ->
+                Log.d("WebRTCService", "Using first available camera: $cameraName")
+                cameraEnumerator.createCapturer(cameraName, null)
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error creating camera capturer", e)
+            null
+        }
+    }
+
+    private fun stopCamera() {
+        try {
+            videoCapturer?.let {
+                try {
+                    it.stopCapture()
+                    Log.d("WebRTCService", "Camera capture stopped")
+                } catch (e: Exception) {
+                    Log.e("WebRTCService", "Error stopping camera capture", e)
+                }
+
+                try {
+                    it.dispose()
+                    Log.d("WebRTCService", "Camera capturer disposed")
+                } catch (e: Exception) {
+                    Log.e("WebRTCService", "Error disposing camera capturer", e)
+                }
+            }
+            videoCapturer = null
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error in stopCamera", e)
         }
     }
 
     private fun createPeerConnection() {
+        Log.d("WebRTCService", "Creating peer connection")
+
         val config = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -135,39 +188,30 @@ class WebRTCService : Service() {
                         Log.d("WebRTCService", "ICE Connected")
                         updateNotification("Connected to peer")
                     }
-                    PeerConnection.IceConnectionState.DISCONNECTED -> {
+                    PeerConnection.IceConnectionState.DISCONNECTED,
+                    PeerConnection.IceConnectionState.FAILED -> {
                         handler.post { scheduleReconnect() }
                     }
                     else -> {}
                 }
             }
 
-            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
-                Log.d("WebRTCService", "Ice gathering state changed: $state")
-            }
-
-            override fun onSignalingChange(state: PeerConnection.SignalingState?) {
-                Log.d("WebRTCService", "Signaling state changed: $state")
-            }
-
-            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                Log.d("WebRTCService", "Add track: ${receiver?.track()?.id()}")
-            }
-
-            override fun onTrack(transceiver: RtpTransceiver?) {
-                Log.d("WebRTCService", "Track added: ${transceiver?.mediaType}")
-            }
-
-            // Остальные методы Observer оставляем пустыми
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+            override fun onTrack(transceiver: RtpTransceiver?) {}
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
             override fun onAddStream(stream: MediaStream?) {}
             override fun onDataChannel(channel: DataChannel?) {}
             override fun onRenegotiationNeeded() {}
             override fun onRemoveStream(stream: MediaStream?) {}
-        })
+        }) ?: run {
+            Log.e("WebRTCService", "Failed to create peer connection")
+            return
+        }
 
-        // Добавляем треки
+        // Add tracks
         localAudioTrack?.let {
             peerConnection?.addTrack(it, listOf("stream_$userName"))
             Log.d("WebRTCService", "Audio track added to peer connection")
@@ -179,14 +223,9 @@ class WebRTCService : Service() {
         }
     }
 
-    private fun createCameraCapturer(): VideoCapturer? {
-        return Camera2Enumerator(this).run {
-            deviceNames.find { isFrontFacing(it) }?.let { createCapturer(it, null) }
-                ?: deviceNames.firstOrNull()?.let { createCapturer(it, null) }
-        }
-    }
-
     private fun connectWebSocket() {
+        Log.d("WebRTCService", "Connecting WebSocket")
+
         val client = OkHttpClient.Builder()
             .pingInterval(pingInterval, TimeUnit.MILLISECONDS)
             .build()
@@ -207,20 +246,12 @@ class WebRTCService : Service() {
                     Log.d("WebRTCService", "Received message: $text")
                     val json = JSONObject(text)
 
-                    if (!json.has("type")) {
-                        if (json.has("ice")) {
-                            handleRemoteIceCandidate(json)
-                        }
-                        return
-                    }
-
-                    when (json.getString("type")) {
+                    when (json.optString("type")) {
                         "offer" -> handleOffer(json)
                         "answer" -> handleAnswer(json)
                         "ice_candidate" -> handleRemoteIceCandidate(json)
                         "joined" -> handleJoinedRoom()
-                        "room_info" -> Log.d("WebRTCService", "Room info updated: ${json.getJSONObject("data")}")
-                        else -> Log.w("WebRTCService", "Unknown message type: ${json.getString("type")}")
+                        else -> if (json.has("ice")) handleRemoteIceCandidate(json)
                     }
                 } catch (e: Exception) {
                     Log.e("WebRTCService", "Error processing message", e)
@@ -251,8 +282,10 @@ class WebRTCService : Service() {
 
     private fun handleJoinedRoom() {
         Log.d("WebRTCService", "Joined room successfully")
-        createPeerConnection()
-        updateNotification("Waiting for peer in $roomName")
+        handler.post {
+            createPeerConnection()
+            updateNotification("Waiting for peer in $roomName")
+        }
     }
 
     private fun handleOffer(offer: JSONObject) {
@@ -357,11 +390,7 @@ class WebRTCService : Service() {
     private fun handleRemoteIceCandidate(candidate: JSONObject) {
         try {
             Log.d("WebRTCService", "Received ICE candidate")
-            val ice = if (candidate.has("ice")) {
-                candidate.getJSONObject("ice")
-            } else {
-                candidate
-            }
+            val ice = if (candidate.has("ice")) candidate.getJSONObject("ice") else candidate
             val iceCandidate = IceCandidate(
                 ice.getString("sdpMid"),
                 ice.getInt("sdpMLineIndex"),
@@ -396,14 +425,25 @@ class WebRTCService : Service() {
     private fun scheduleReconnect() {
         if (reconnectAttempts >= maxReconnectAttempts) {
             Log.w("WebRTCService", "Max reconnect attempts reached")
+            stopSelf()
             return
         }
 
         reconnectAttempts++
         Log.d("WebRTCService", "Scheduling reconnect attempt $reconnectAttempts in ${reconnectDelay}ms")
+
         handler.postDelayed({
-            connectWebSocket()
+            if (!isConnected()) {
+                webSocket?.close(1000, "Reconnecting")
+                webSocket = null
+                connectWebSocket()
+            }
         }, reconnectDelay)
+    }
+
+    private fun isConnected(): Boolean {
+        return webSocket != null && peerConnection != null &&
+                peerConnection?.iceConnectionState() == PeerConnection.IceConnectionState.CONNECTED
     }
 
     private fun createNotificationChannel() {
@@ -434,21 +474,39 @@ class WebRTCService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(notificationId, notification)
+        getSystemService(NotificationManager::class.java)?.notify(notificationId, notification)
     }
 
     override fun onDestroy() {
         Log.d("WebRTCService", "Service destroyed")
-        webSocket?.close(1000, "Service destroyed")
-        peerConnection?.close()
-        videoCapturer?.stopCapture()
-        videoCapturer?.dispose()
-        localAudioTrack?.dispose()
-        localVideoTrack?.dispose()
-        surfaceTextureHelper?.dispose()
-        peerConnectionFactory.dispose()
-        eglBase.release()
+
+        try {
+            stopCamera()
+
+            surfaceTextureHelper?.dispose()
+            surfaceTextureHelper = null
+
+            webSocket?.close(1000, "Service destroyed")
+            webSocket = null
+
+            peerConnection?.close()
+            peerConnection = null
+
+            localAudioTrack?.dispose()
+            localAudioTrack = null
+
+            localVideoTrack?.dispose()
+            localVideoTrack = null
+
+            videoSource?.dispose()
+            videoSource = null
+
+            peerConnectionFactory.dispose()
+            eglBase.release()
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error during cleanup", e)
+        }
+
         super.onDestroy()
     }
 }
