@@ -1,3 +1,4 @@
+// file: src/main/java/com/example/mytest/MainActivity.kt
 package com.example.mytest
 
 import android.Manifest
@@ -236,8 +237,9 @@ class MainActivity : ComponentActivity() {
         errorMessage = ""
 
         try {
-            webSocketClient.connect("wss://anybet.site/ws")
+            webSocketClient.connect("wss://your-websocket-server.com/ws")
             val joinMessage = JSONObject().apply {
+                put("action", "join")
                 put("room", room)
                 put("username", username)
             }
@@ -249,23 +251,37 @@ class MainActivity : ComponentActivity() {
 
     private fun startCall() {
         errorMessage = ""
-        webRTCClient.createOffer(object : SdpObserver {
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+        }
+
+        webRTCClient.peerConnection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {
                 desc?.let {
-                    val offerMessage = JSONObject().apply {
-                        put("type", "offer")
-                        put("sdp", JSONObject().apply {
-                            put("type", it.type.canonicalForm())
-                            put("sdp", it.description)
-                        })
-                    }
-                    webSocketClient.sendRaw(offerMessage.toString())
+                    // Модифицируем SDP для лучшей совместимости с браузерами
+                    val modifiedSdp = it.description.replace(
+                        "useinbandfec=1",
+                        "useinbandfec=1; stereo=1; maxaveragebitrate=510000"
+                    )
+                    val modifiedDesc = SessionDescription(it.type, modifiedSdp)
+
                     webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onSetSuccess() {}
                         override fun onCreateFailure(p0: String?) {}
                         override fun onSetFailure(p0: String?) {}
-                    }, it)
+                    }, modifiedDesc)
+
+                    val offerMessage = JSONObject().apply {
+                        put("type", "offer")
+                        put("sdp", JSONObject().apply {
+                            put("type", modifiedDesc.type.canonicalForm())
+                            put("sdp", modifiedDesc.description)
+                        })
+                        put("target", usersInRoom.firstOrNull { it != currentUsername })
+                    }
+                    webSocketClient.sendRaw(offerMessage.toString())
                 }
             }
             override fun onSetSuccess() {}
@@ -277,7 +293,7 @@ class MainActivity : ComponentActivity() {
                 errorMessage = "Offer setup failed: $error"
                 Log.e("WebRTC", "Set offer error: $error")
             }
-        })
+        }, constraints)
         isCallActive = true
     }
 
@@ -298,23 +314,29 @@ class MainActivity : ComponentActivity() {
         webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {
-                webRTCClient.createAnswer(object : SdpObserver {
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                }
+                webRTCClient.peerConnection.createAnswer(object : SdpObserver {
                     override fun onCreateSuccess(desc: SessionDescription?) {
                         desc?.let {
-                            val answerMessage = JSONObject().apply {
-                                put("type", "answer")
-                                put("sdp", JSONObject().apply {
-                                    put("type", it.type.canonicalForm())
-                                    put("sdp", it.description)
-                                })
-                            }
-                            webSocketClient.sendRaw(answerMessage.toString())
                             webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                                 override fun onCreateSuccess(p0: SessionDescription?) {}
                                 override fun onSetSuccess() {}
                                 override fun onCreateFailure(p0: String?) {}
                                 override fun onSetFailure(p0: String?) {}
                             }, it)
+
+                            val answerMessage = JSONObject().apply {
+                                put("type", "answer")
+                                put("sdp", JSONObject().apply {
+                                    put("type", it.type.canonicalForm())
+                                    put("sdp", it.description)
+                                })
+                                put("target", message.optString("from"))
+                            }
+                            webSocketClient.sendRaw(answerMessage.toString())
                         }
                     }
                     override fun onSetSuccess() {}
@@ -326,7 +348,7 @@ class MainActivity : ComponentActivity() {
                         errorMessage = "Answer setup failed: $error"
                         Log.e("WebRTC", "Set answer error: $error")
                     }
-                })
+                }, constraints)
             }
             override fun onCreateFailure(error: String?) {
                 errorMessage = "Remote description failed: $error"
@@ -348,7 +370,9 @@ class MainActivity : ComponentActivity() {
 
         webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
-            override fun onSetSuccess() {}
+            override fun onSetSuccess() {
+                isCallActive = true
+            }
             override fun onCreateFailure(error: String?) {
                 errorMessage = "Remote description failed: $error"
                 Log.e("WebRTC", "Create remote description error: $error")
@@ -378,6 +402,7 @@ class MainActivity : ComponentActivity() {
                 put("sdpMid", candidate.sdpMid)
                 put("sdpMLineIndex", candidate.sdpMLineIndex)
             })
+            put("target", usersInRoom.firstOrNull { it != currentUsername })
         }
         webSocketClient.sendRaw(message.toString())
     }
@@ -484,3 +509,4 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
+

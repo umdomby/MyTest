@@ -1,3 +1,5 @@
+
+// file: src/main/java/com/example/mytest/WebRTCClient.kt
 package com.example.mytest
 
 import android.content.Context
@@ -19,24 +21,41 @@ class WebRTCClient(
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     init {
-        // Инициализация PeerConnectionFactory
+        // Инициализация PeerConnectionFactory с включенным H.264 для совместимости с браузерами
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
+            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
+        val videoEncoderFactory = DefaultVideoEncoderFactory(
+            eglBase.eglBaseContext,
+            true,  // enableIntelVp8Encoder
+            true   // enableH264HighProfile
+        )
+
+        val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+
         peerConnectionFactory = PeerConnectionFactory.builder()
-            .setVideoEncoderFactory(DefaultVideoEncoderFactory(
-                eglBase.eglBaseContext, true, true))
-            .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
+            .setVideoEncoderFactory(videoEncoderFactory)
+            .setVideoDecoderFactory(videoDecoderFactory)
             .createPeerConnectionFactory()
 
-        // Создание PeerConnection
+        // Создание PeerConnection с Unified Plan и лучшими настройками для совместимости
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            iceTransportsType = PeerConnection.IceTransportsType.ALL
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
+            candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
+            keyType = PeerConnection.KeyType.ECDSA
+                //enableDtlsSrtp = true
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
@@ -47,8 +66,15 @@ class WebRTCClient(
 
     private fun createLocalStream() {
         try {
-            // Создание аудио трека
-            val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
+            // Создание аудио трека с лучшими настройками
+            val audioConstraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            }
+
+            val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
             localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
 
             // Создание видео трека
@@ -64,26 +90,18 @@ class WebRTCClient(
                 context,
                 videoSource.capturerObserver
             )
-            videoCapturer?.startCapture(640, 480, 30)
+            videoCapturer?.startCapture(1280, 720, 30)  // Более высокое качество для лучшей совместимости
 
             localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK", videoSource).apply {
                 addSink(localView)
             }
 
             // Добавление треков в peerConnection
-            localAudioTrack?.let { audioTrack ->
-                peerConnection.addTransceiver(
-                    audioTrack,
-                    RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY)
-                )
-            }
+            val localStream = peerConnectionFactory.createLocalMediaStream("local_stream")
+            localAudioTrack?.let { localStream.addTrack(it) }
+            localVideoTrack?.let { localStream.addTrack(it) }
 
-            localVideoTrack?.let { videoTrack ->
-                peerConnection.addTransceiver(
-                    videoTrack,
-                    RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY)
-                )
-            }
+            peerConnection.addStream(localStream)
 
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error creating local stream", e)
@@ -100,30 +118,6 @@ class WebRTCClient(
                 createCapturer(it, null)
             }
         }
-    }
-
-    fun createOffer(observer: SdpObserver) {
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-        }
-        peerConnection.createOffer(observer, constraints)
-    }
-
-    fun createAnswer(observer: SdpObserver) {
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-        }
-        peerConnection.createAnswer(observer, constraints)
-    }
-
-    fun setRemoteDescription(sdp: SessionDescription, observer: SdpObserver) {
-        peerConnection.setRemoteDescription(observer, sdp)
-    }
-
-    fun addIceCandidate(candidate: IceCandidate) {
-        peerConnection.addIceCandidate(candidate)
     }
 
     fun close() {
