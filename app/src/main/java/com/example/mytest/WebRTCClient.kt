@@ -58,17 +58,14 @@ class WebRTCClient(
 
     private fun createLocalStream() {
         try {
-            // Аудио
             val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
-            val localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
-            peerConnection.addTrack(localAudioTrack)
+            localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
 
-            // Видео
+            val surfaceTextureHelper = SurfaceTextureHelper.create(
+                "CaptureThread", eglBase.eglBaseContext
+            )
+
             videoCapturer = createCameraCapturer()?.apply {
-                val surfaceTextureHelper = SurfaceTextureHelper.create(
-                    "VideoCaptureThread",
-                    eglBase.eglBaseContext
-                )
                 val videoSource = peerConnectionFactory.createVideoSource(false)
                 initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
                 startCapture(640, 480, 30)
@@ -76,10 +73,15 @@ class WebRTCClient(
                 localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK", videoSource).apply {
                     addSink(localView)
                 }
-                peerConnection.addTrack(localVideoTrack!!)
+
+                // UNIFIED_PLAN: добавляем как transceiver
+                peerConnection.addTransceiver(localVideoTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
             }
+
+            peerConnection.addTransceiver(localAudioTrack, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
+
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error creating stream", e)
+            Log.e("WebRTCClient", "Error creating local stream", e)
         }
     }
 

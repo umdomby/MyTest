@@ -436,6 +436,7 @@ class MainActivity : ComponentActivity() {
                 }
                 override fun onTrack(transceiver: RtpTransceiver?) {
                     transceiver?.receiver?.track()?.let { track ->
+                        Log.d("WebRTC", "onTrack: kind=${track.kind()}")
                         if (track.kind() == "video") {
                             (track as VideoTrack).addSink(remoteView)
                         }
