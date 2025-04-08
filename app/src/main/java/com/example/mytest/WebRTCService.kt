@@ -1,3 +1,4 @@
+// file: src/main/java/com/example/mytest/WebRTCService.kt
 package com.example.mytest
 
 import android.app.*
@@ -18,12 +19,10 @@ class WebRTCService : Service() {
     private var localView: SurfaceViewRenderer? = null
     private var remoteView: SurfaceViewRenderer? = null
 
-    // Configuration
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://anybet.site/ws"
 
-    // Notification
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
     private val handler = Handler(Looper.getMainLooper())
@@ -65,7 +64,6 @@ class WebRTCService : Service() {
 
         eglBase = EglBase.create()
 
-        // Reinitialize views
         localView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setMirror(true)
@@ -168,18 +166,11 @@ class WebRTCService : Service() {
         handler.post {
             try {
                 updateNotification("Reconnecting...")
-
-                // 1. Disconnect existing connections
                 webSocketClient.disconnect()
                 cleanupWebRTCResources()
-
-                // 2. Wait briefly before reconnecting
                 Thread.sleep(1000)
-
-                // 3. Full reinitialization
                 initializeWebRTC()
                 connectWebSocket()
-
             } catch (e: Exception) {
                 Log.e("WebRTCService", "Reconnect error", e)
                 updateNotification("Reconnect failed")
@@ -235,10 +226,15 @@ class WebRTCService : Service() {
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            // Указываем предпочтение кодека VP8 для совместимости с браузерами
+            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "VP8"))
+            // Альтернативно можно указать H.264 с определенным профилем
+            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "H264"))
         }
 
         webRTCClient.peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
+                // Обработка успешного создания answer
                 webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
                         sendSessionDescription(desc)
