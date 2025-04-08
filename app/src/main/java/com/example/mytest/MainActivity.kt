@@ -23,6 +23,11 @@ import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import org.webrtc.*
 
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+
+
 class MainActivity : ComponentActivity() {
     private var webRTCClient: WebRTCClient? = null
     private var webSocketClient: WebSocketClient? = null
@@ -58,6 +63,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        //startWebRTCService()
+        //finish() // Закрываем Activity, оставляя только сервис
+
         if (checkAllPermissionsGranted()) {
             initializeComponents()
             setUI()
@@ -65,6 +73,22 @@ class MainActivity : ComponentActivity() {
             requestPermissionLauncher.launch(requiredPermissions)
         }
     }
+
+//    private fun startWebRTCService() {
+//        val serviceIntent = Intent(this, WebRTCService::class.java)
+//
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+//            val notification = NotificationCompat.Builder(this, "webrtc_channel")
+//                .setContentTitle("WebRTC соединение")
+//                .setContentText("Поддержание видеосвязи")
+//                .setSmallIcon(R.drawable.ic_launcher_foreground)  // Используем стандартную иконку
+//                .build()
+//
+//            ContextCompat.startForegroundService(this, serviceIntent)
+//        } else {
+//            startService(serviceIntent)
+//        }
+//    }
 
     private fun initializeComponents() {
         cleanupResources()
