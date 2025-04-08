@@ -1,47 +1,30 @@
-// MainActivity.kt
 package com.example.mytest
 
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import org.webrtc.*
 
 class MainActivity : ComponentActivity() {
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
         Manifest.permission.RECORD_AUDIO,
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.POST_NOTIFICATIONS
-        } else {
-            ""
-        },
-        Manifest.permission.FOREGROUND_SERVICE
-    ).filter { it.isNotEmpty() }.toTypedArray()
+        Manifest.permission.POST_NOTIFICATIONS
+    )
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions.all { it.value }) {
             startWebRTCService()
-            finish()
+            showToast("Service started successfully")
         } else {
-            Toast.makeText(this, "Required permissions not granted", Toast.LENGTH_SHORT).show()
+            showToast("Required permissions not granted")
             finish()
         }
     }
@@ -51,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
         if (checkAllPermissionsGranted()) {
             startWebRTCService()
-            finish()
+            showToast("Service started successfully")
         } else {
             requestPermissionLauncher.launch(requiredPermissions)
         }
@@ -61,13 +44,18 @@ class MainActivity : ComponentActivity() {
         try {
             val serviceIntent = Intent(this, WebRTCService::class.java)
             ContextCompat.startForegroundService(this, serviceIntent)
+            // Не закрываем Activity сразу, даем пользователю возможность взаимодействовать
         } catch (e: Exception) {
-            Log.e("MainActivity", "Failed to start service", e)
-            Toast.makeText(this, "Failed to start service", Toast.LENGTH_SHORT).show()
+            showToast("Failed to start service: ${e.message}")
+            Log.e("MainActivity", "Service start failed", e)
         }
     }
 
     private fun checkAllPermissionsGranted() = requiredPermissions.all {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun showToast(text: String) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show() // Используем LENGTH_LONG
     }
 }

@@ -1,24 +1,26 @@
 package com.example.mytest
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
+import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import okhttp3.*
 import org.json.JSONObject
 import org.webrtc.*
+import java.util.Timer
+import java.util.TimerTask
 import java.util.concurrent.TimeUnit
 
-class WebRTCService : Service(), WebSocketListener {
+class WebRTCService : Service() {
     private val binder = LocalBinder()
-    private lateinit var webSocketClient: WebSocketClient
+    private var webSocket: WebSocket? = null
     private var peerConnection: PeerConnection? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var pingTimer: Timer? = null
+    private var lastPongReceived = System.currentTimeMillis()
 
     // WebRTC components
     private lateinit var peerConnectionFactory: PeerConnectionFactory
@@ -34,6 +36,13 @@ class WebRTCService : Service(), WebSocketListener {
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
     )
+
+    // WebSocket
+    private val pingInterval = 25000L // Ping every 25 seconds
+    private val pongTimeout = 30000L  // Timeout after 30 seconds
+    private val reconnectDelay = 5000L
+    private var reconnectAttempts = 0
+    private val maxReconnectAttempts = 5
 
     // Notification
     private val notificationId = 1
@@ -52,6 +61,7 @@ class WebRTCService : Service(), WebSocketListener {
         startForegroundService()
         initializeWebRTC()
         connectWebSocket()
+        startPingTimer()
     }
 
     private fun startForegroundService() {
@@ -109,53 +119,113 @@ class WebRTCService : Service(), WebSocketListener {
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
-        return try {
-            Camera2Enumerator(this).run {
-                deviceNames.find { isFrontFacing(it) }?.let {
-                    Log.d("WebRTCService", "Using front-facing camera")
-                    createCapturer(it, null)
-                } ?: deviceNames.firstOrNull()?.let {
-                    Log.d("WebRTCService", "Using first available camera")
-                    createCapturer(it, null)
-                }
+        return Camera2Enumerator(this).run {
+            deviceNames.find { isFrontFacing(it) }?.let {
+                Log.d("WebRTCService", "Using front-facing camera")
+                createCapturer(it, null)
+            } ?: deviceNames.firstOrNull()?.let {
+                Log.d("WebRTCService", "Using first available camera")
+                createCapturer(it, null)
             }
-        } catch (e: Exception) {
-            Log.e("WebRTCService", "Error creating camera capturer", e)
-            null
         }
     }
 
     private fun connectWebSocket() {
         Log.d("WebRTCService", "Connecting to WebSocket")
-        webSocketClient = WebSocketClient(this)
-        webSocketClient.connect("wss://anybet.site/ws")
+
+        val client = OkHttpClient.Builder()
+            .pingInterval(0, TimeUnit.MILLISECONDS) // Disable built-in ping
+            .build()
+
+        val request = Request.Builder()
+            .url("wss://anybet.site/ws")
+            .build()
+
+        webSocket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d("WebRTCService", "WebSocket connected")
+                reconnectAttempts = 0
+                lastPongReceived = System.currentTimeMillis()
+                joinRoom()
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                try {
+                    val json = JSONObject(text)
+                    when (json.optString("type")) {
+                        "pong" -> {
+                            lastPongReceived = System.currentTimeMillis()
+                            Log.d("WebRTCService", "Pong received")
+                        }
+                        "offer" -> handleOffer(json)
+                        "answer" -> handleAnswer(json)
+                        "ice_candidate" -> handleRemoteIceCandidate(json)
+                        "joined" -> handleJoinedRoom()
+                    }
+                } catch (e: Exception) {
+                    Log.e("WebRTCService", "Error processing message", e)
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d("WebRTCService", "WebSocket closed: $reason")
+                scheduleReconnect()
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e("WebRTCService", "WebSocket error", t)
+                scheduleReconnect()
+            }
+        })
     }
 
-    // WebSocketListener implementation
-    override fun onMessage(message: JSONObject) {
-        Log.d("WebRTCService", "Received message: ${message.toString()}")
-        handler.post {
-            when (message.optString("type")) {
-                "offer" -> handleOffer(message)
-                "answer" -> handleAnswer(message)
-                "ice_candidate" -> handleRemoteIceCandidate(message)
-                "joined" -> handleJoinedRoom()
-            }
+    private fun startPingTimer() {
+        pingTimer?.cancel()
+        pingTimer = Timer().apply {
+            scheduleAtFixedRate(object : TimerTask() {
+                override fun run() {
+                    checkConnection()
+                }
+            }, pingInterval, pingInterval)
         }
     }
 
-    override fun onConnected() {
-        Log.d("WebRTCService", "WebSocket connected")
-        handler.post { joinRoom() }
+    private fun checkConnection() {
+        val now = System.currentTimeMillis()
+        if (now - lastPongReceived > pongTimeout) {
+            Log.w("WebRTCService", "Pong timeout, reconnecting...")
+            handler.post { scheduleReconnect() }
+        } else {
+            sendPing()
+        }
     }
 
-    override fun onDisconnected() {
-        Log.d("WebRTCService", "WebSocket disconnected")
-        handler.post { scheduleReconnect() }
+    private fun sendPing() {
+        try {
+            val pingMessage = JSONObject().apply {
+                put("type", "ping")
+            }
+            webSocket?.send(pingMessage.toString())
+            Log.d("WebRTCService", "Ping sent")
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error sending ping", e)
+        }
     }
 
-    override fun onError(error: String) {
-        Log.e("WebRTCService", "WebSocket error: $error")
+    private fun scheduleReconnect() {
+        if (reconnectAttempts >= maxReconnectAttempts) {
+            Log.w("WebRTCService", "Max reconnect attempts reached")
+            stopSelf()
+            return
+        }
+
+        reconnectAttempts++
+        Log.d("WebRTCService", "Scheduling reconnect attempt $reconnectAttempts")
+
+        handler.postDelayed({
+            webSocket?.close(1000, "Reconnecting")
+            connectWebSocket()
+        }, reconnectDelay)
     }
 
     private fun joinRoom() {
@@ -164,12 +234,16 @@ class WebRTCService : Service(), WebSocketListener {
             put("room", roomName)
             put("username", userName)
         }
-        webSocketClient.send(message.toString())
+        webSocket?.send(message.toString())
+        Log.d("WebRTCService", "Joining room: $roomName")
     }
 
     private fun handleJoinedRoom() {
         Log.d("WebRTCService", "Joined room successfully")
-        createPeerConnection()
+        handler.post {
+            createPeerConnection()
+            updateNotification("Waiting for peer in $roomName")
+        }
     }
 
     private fun createPeerConnection() {
@@ -187,26 +261,36 @@ class WebRTCService : Service(), WebSocketListener {
                 candidate?.let { sendIceCandidate(it) }
             }
 
-            override fun onIceCandidatesRemoved(p0: Array<out IceCandidate?>?) {
-                TODO("Not yet implemented")
-            }
-
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                 Log.d("WebRTCService", "ICE connection state: $state")
+                when (state) {
+                    PeerConnection.IceConnectionState.CONNECTED -> {
+                        updateNotification("Streaming active")
+                    }
+                    PeerConnection.IceConnectionState.DISCONNECTED -> {
+                        // Handle disconnection
+                    }
+                    else -> {}
+                }
             }
 
-            // Other required override methods
+            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                Log.d("WebRTCService", "Track added")
+            }
+
+            override fun onTrack(transceiver: RtpTransceiver?) {
+                Log.d("WebRTCService", "Transceiver track: ${transceiver?.mediaType}")
+            }
+
+            // Other required overrides
             override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
             override fun onIceConnectionReceivingChange(p0: Boolean) {}
             override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
-            override fun onAddStream(p0: MediaStream?) {}
+            override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
             override fun onRemoveStream(p0: MediaStream?) {}
             override fun onDataChannel(p0: DataChannel?) {}
             override fun onRenegotiationNeeded() {}
-            override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
-            override fun onTrack(transceiver: RtpTransceiver?) {
-                Log.d("WebRTCService", "Track added: ${transceiver?.mediaType}")
-            }
+            override fun onAddStream(p0: MediaStream?) {} // Добавлен для совместимости
         })
 
         // Add tracks
@@ -224,7 +308,6 @@ class WebRTCService : Service(), WebSocketListener {
 
             peerConnection?.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
-                    Log.d("WebRTCService", "Remote description set")
                     createAnswer()
                 }
                 override fun onSetFailure(error: String) {
@@ -276,7 +359,7 @@ class WebRTCService : Service(), WebSocketListener {
                 put("room", roomName)
                 put("username", userName)
             }
-            webSocketClient.send(message.toString())
+            webSocket?.send(message.toString())
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error sending SDP", e)
         }
@@ -331,18 +414,10 @@ class WebRTCService : Service(), WebSocketListener {
                 put("room", roomName)
                 put("username", userName)
             }
-            webSocketClient.send(message.toString())
+            webSocket?.send(message.toString())
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error sending ICE candidate", e)
         }
-    }
-
-    private fun scheduleReconnect() {
-        handler.postDelayed({
-            Log.d("WebRTCService", "Attempting to reconnect...")
-            webSocketClient.disconnect()
-            connectWebSocket()
-        }, 5000)
     }
 
     private fun createNotificationChannel() {
@@ -362,11 +437,24 @@ class WebRTCService : Service(), WebSocketListener {
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("WebRTC Service")
-            .setContentText("Streaming in room $roomName")
+            .setContentText("Waiting for connection in $roomName")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()
+    }
+
+    private fun updateNotification(text: String) {
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("WebRTC Service")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(notificationId, notification)
     }
 
     override fun onDestroy() {
@@ -377,11 +465,12 @@ class WebRTCService : Service(), WebSocketListener {
 
     private fun cleanupResources() {
         try {
+            pingTimer?.cancel()
+            webSocket?.close(1000, "Service destroyed")
+            peerConnection?.close()
             videoCapturer?.stopCapture()
             videoCapturer?.dispose()
             surfaceTextureHelper?.dispose()
-            webSocketClient.disconnect()
-            peerConnection?.close()
             localAudioTrack?.dispose()
             localVideoTrack?.dispose()
             peerConnectionFactory.dispose()
