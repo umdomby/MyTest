@@ -84,8 +84,22 @@ class WebRTCService : Service() {
             .setOptions(options)
             .createPeerConnectionFactory()
 
-        createPeerConnection()
-        startLocalCapture()
+        createLocalTracks()
+    }
+
+    private fun createLocalTracks() {
+        // Audio
+        val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
+        localAudioTrack = peerConnectionFactory.createAudioTrack("audio_track", audioSource)
+
+        // Video
+        videoCapturer = createCameraCapturer()
+        val videoSource = peerConnectionFactory.createVideoSource(false)
+        surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
+        videoCapturer?.initialize(surfaceTextureHelper, applicationContext, videoSource.capturerObserver)
+        videoCapturer?.startCapture(640, 480, 30)
+
+        localVideoTrack = peerConnectionFactory.createVideoTrack("video_track", videoSource)
     }
 
     private fun createPeerConnection() {
@@ -121,21 +135,10 @@ class WebRTCService : Service() {
                 Log.d("WebRTCService", "Track added: ${transceiver?.mediaType}")
             }
         })
-    }
 
-    private fun startLocalCapture() {
-        // Audio
-        val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
-        localAudioTrack = peerConnectionFactory.createAudioTrack("audio_track", audioSource)
-
-        // Video
-        videoCapturer = createCameraCapturer()
-        val videoSource = peerConnectionFactory.createVideoSource(false)
-        surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
-        videoCapturer?.initialize(surfaceTextureHelper, applicationContext, videoSource.capturerObserver)
-        videoCapturer?.startCapture(640, 480, 30)
-
-        localVideoTrack = peerConnectionFactory.createVideoTrack("video_track", videoSource)
+        // Добавляем треки только после создания PeerConnection
+        peerConnection?.addTrack(localAudioTrack!!, listOf("stream_$userName"))
+        peerConnection?.addTrack(localVideoTrack!!, listOf("stream_$userName"))
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
@@ -151,7 +154,7 @@ class WebRTCService : Service() {
             .build()
 
         val request = Request.Builder()
-            .url("wss://anybet.site/ws") // Замените на ваш IP сервера
+            .url("wss://anybet.site/ws")
             .build()
 
         webSocket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
@@ -166,7 +169,6 @@ class WebRTCService : Service() {
                     Log.d("WebRTCService", "Received message: $text")
                     val json = JSONObject(text)
 
-                    // Обработка сообщений без поля type (ICE candidates)
                     if (!json.has("type")) {
                         if (json.has("ice")) {
                             handleRemoteIceCandidate(json)
@@ -210,9 +212,7 @@ class WebRTCService : Service() {
 
     private fun handleJoinedRoom() {
         Log.d("WebRTCService", "Joined room successfully")
-        peerConnection?.addTrack(localAudioTrack!!, listOf("stream_id"))
-        peerConnection?.addTrack(localVideoTrack!!, listOf("stream_id"))
-        createOffer()
+        createPeerConnection()
     }
 
     private fun createOffer() {
@@ -308,6 +308,8 @@ class WebRTCService : Service() {
                     put("type", desc.type.canonicalForm())
                     put("sdp", desc.description)
                 })
+                put("room", roomName)
+                put("username", userName)
             }
             Log.d("WebRTCService", "Sending ${desc.type}: ${desc.description}")
             webSocket?.send(message.toString())
@@ -368,6 +370,8 @@ class WebRTCService : Service() {
                     put("sdpMLineIndex", candidate.sdpMLineIndex)
                     put("candidate", candidate.sdp)
                 })
+                put("room", roomName)
+                put("username", userName)
             }
             Log.d("WebRTCService", "Sending ICE candidate: ${candidate.sdp}")
             webSocket?.send(message.toString())
