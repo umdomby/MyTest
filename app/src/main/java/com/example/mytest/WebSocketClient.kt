@@ -1,3 +1,4 @@
+
 // file: src/main/java/com/example/mytest/WebSocketClient.kt
 package com.example.mytest
 
@@ -14,7 +15,7 @@ interface WebSocketListener {
 }
 
 class WebSocketClient(private val listener: WebSocketListener) {
-    private var webSocket: okhttp3.WebSocket? = null
+    private var webSocket: WebSocket? = null
     private val client = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
@@ -25,12 +26,12 @@ class WebSocketClient(private val listener: WebSocketListener) {
             .build()
 
         webSocket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
-            override fun onOpen(webSocket: okhttp3.WebSocket, response: Response) {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d("WebSocket", "Connection opened")
                 listener.onConnected()
             }
 
-            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+            override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     Log.d("WebSocket", "Received: $text")
                     listener.onMessage(JSONObject(text))
@@ -39,12 +40,12 @@ class WebSocketClient(private val listener: WebSocketListener) {
                 }
             }
 
-            override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d("WebSocket", "Connection closed: $reason")
                 listener.onDisconnected()
             }
 
-            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: Response?) {
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e("WebSocket", "Connection error", t)
                 listener.onError(t.message ?: "Unknown error")
             }
@@ -52,7 +53,11 @@ class WebSocketClient(private val listener: WebSocketListener) {
     }
 
     fun send(message: String) {
-        webSocket?.send(message)
+        webSocket?.send(message.toString())
+    }
+
+    fun sendRaw(text: String) {
+        webSocket?.send(text)
     }
 
     fun disconnect() {
