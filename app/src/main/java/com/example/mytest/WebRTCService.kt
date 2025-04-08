@@ -207,6 +207,12 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
+            // Устанавливаем ограничения для лучшей совместимости
+            val sdpConstraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            }
+
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     createAnswer()
@@ -226,25 +232,29 @@ class WebRTCService : Service() {
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            // Указываем предпочтение кодека VP8 для совместимости с браузерами
-            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "VP8"))
-            // Альтернативно можно указать H.264 с определенным профилем
-            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "H264"))
+            // Приоритет для VP8
+            optional.add(MediaConstraints.KeyValuePair("googCodecPreferences", "VP8,H264"))
         }
 
         webRTCClient.peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
-                // Обработка успешного создания answer
+                // Модифицируем SDP для лучшей совместимости
+                val modifiedSdp = desc.description.replace(
+                    "profile-level-id=42e01f",
+                    "profile-level-id=42e01f;packetization-mode=1"
+                )
+                val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
+
                 webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
-                        sendSessionDescription(desc)
+                        sendSessionDescription(modifiedDesc)
                     }
                     override fun onSetFailure(error: String) {
                         Log.e("WebRTCService", "Set local desc failed: $error")
                     }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(error: String) {}
-                }, desc)
+                }, modifiedDesc)
             }
             override fun onCreateFailure(error: String) {
                 Log.e("WebRTCService", "Create answer failed: $error")

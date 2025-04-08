@@ -1,4 +1,4 @@
-// file: src/main/java/com/example/mytest/WebSocketClient.kt
+// file: app/src/main/java/com/example/mytest/WebSocketClient.kt
 package com.example.mytest
 
 import android.util.Log
@@ -52,7 +52,11 @@ class WebSocketClient(private val listener: WebSocketListener) {
     }
 
     fun send(message: String) {
-        webSocket?.send(message)
+        webSocket?.send(message.toString())
+    }
+
+    fun sendRaw(text: String) {
+        webSocket?.send(text)
     }
 
     fun disconnect() {

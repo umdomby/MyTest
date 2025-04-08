@@ -1,4 +1,4 @@
-// file: src/main/java/com/example/mytest/WebRTCClient.kt
+// file: app/src/main/java/com/example/mytest/WebRTCClient.kt
 package com.example.mytest
 
 import android.content.Context
@@ -20,7 +20,7 @@ class WebRTCClient(
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     init {
-        // Инициализация PeerConnectionFactory с поддержкой VP8 и H.264
+        // Initialize PeerConnectionFactory with H.264 and VP8 support
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
             .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
@@ -40,9 +40,11 @@ class WebRTCClient(
             .setVideoDecoderFactory(videoDecoderFactory)
             .createPeerConnectionFactory()
 
-        // Настройки PeerConnection для лучшей совместимости
+        // Enhanced configuration for browser compatibility
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -51,6 +53,7 @@ class WebRTCClient(
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
+            keyType = PeerConnection.KeyType.ECDSA
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
@@ -59,7 +62,7 @@ class WebRTCClient(
 
     private fun createLocalTracks() {
         try {
-            // Create audio track
+            // Audio track with echo cancellation
             val audioConstraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
@@ -69,11 +72,9 @@ class WebRTCClient(
 
             val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
             localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
-            localAudioTrack?.let {
-                peerConnection.addTrack(it, listOf("stream_id"))
-            }
+            peerConnection.addTrack(localAudioTrack!!, listOf("stream"))
 
-            // Create video track
+            // Video track with camera capture
             videoCapturer = createCameraCapturer()
             surfaceTextureHelper = SurfaceTextureHelper.create(
                 "CaptureThread",
@@ -86,14 +87,12 @@ class WebRTCClient(
                 context,
                 videoSource.capturerObserver
             )
-            videoCapturer?.startCapture(1280, 720, 30)
+            videoCapturer?.startCapture(640, 480, 30) // Reduced resolution for better compatibility
 
             localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK", videoSource).apply {
                 addSink(localView)
             }
-            localVideoTrack?.let {
-                peerConnection.addTrack(it, listOf("stream_id"))
-            }
+            peerConnection.addTrack(localVideoTrack!!, listOf("stream"))
 
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error creating local tracks", e)
