@@ -1,3 +1,4 @@
+// file: src/main/java/com/example/mytest/WebRTCClient.kt
 package com.example.mytest
 
 import android.content.Context
@@ -19,7 +20,7 @@ class WebRTCClient(
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     init {
-        // Initialize PeerConnectionFactory with H.264 support
+        // Инициализация PeerConnectionFactory с поддержкой VP8 и H.264
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
             .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
@@ -39,11 +40,9 @@ class WebRTCClient(
             .setVideoDecoderFactory(videoDecoderFactory)
             .createPeerConnectionFactory()
 
-        // Create PeerConnection with Unified Plan
+        // Настройки PeerConnection для лучшей совместимости
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -52,13 +51,9 @@ class WebRTCClient(
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
-            keyType = PeerConnection.KeyType.ECDSA
-            // enableDtlsSrtp is now always enabled in newer versions
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
-
-        // Create media streams using addTrack instead of addStream
         createLocalTracks()
     }
 

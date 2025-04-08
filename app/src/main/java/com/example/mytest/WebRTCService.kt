@@ -1,3 +1,4 @@
+// file: src/main/java/com/example/mytest/WebRTCService.kt
 package com.example.mytest
 
 import android.app.*
@@ -9,7 +10,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import org.webrtc.*
-import java.util.concurrent.TimeUnit
 
 class WebRTCService : Service() {
     private val binder = LocalBinder()
@@ -19,14 +19,13 @@ class WebRTCService : Service() {
     private var localView: SurfaceViewRenderer? = null
     private var remoteView: SurfaceViewRenderer? = null
 
-    // Configuration
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://anybet.site/ws"
 
-    // Notification
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
+    private val handler = Handler(Looper.getMainLooper())
 
     inner class LocalBinder : Binder() {
         fun getService(): WebRTCService = this@WebRTCService
@@ -37,7 +36,6 @@ class WebRTCService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("WebRTCService", "Service onCreate")
-
         createNotificationChannel()
         startForegroundService()
         initializeWebRTC()
@@ -62,16 +60,19 @@ class WebRTCService : Service() {
 
     private fun initializeWebRTC() {
         Log.d("WebRTCService", "Initializing WebRTC")
+        cleanupWebRTCResources()
+
         eglBase = EglBase.create()
 
-        // Initialize views (in service this would need a different approach)
         localView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setMirror(true)
+            setEnableHardwareScaler(true)
         }
 
         remoteView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
+            setEnableHardwareScaler(true)
         }
 
         webRTCClient = WebRTCClient(
@@ -95,7 +96,6 @@ class WebRTCService : Service() {
                     }
                 }
 
-                // Other required overrides
                 override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
                 override fun onIceConnectionReceivingChange(p0: Boolean) {}
                 override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
@@ -114,6 +114,28 @@ class WebRTCService : Service() {
                 }
             }
         )
+    }
+
+    private fun cleanupWebRTCResources() {
+        try {
+            webRTCClient?.close()
+
+            localView?.let {
+                it.clearImage()
+                it.release()
+                localView = null
+            }
+
+            remoteView?.let {
+                it.clearImage()
+                it.release()
+                remoteView = null
+            }
+
+            eglBase?.release()
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error cleaning up WebRTC resources", e)
+        }
     }
 
     private fun connectWebSocket() {
@@ -140,6 +162,22 @@ class WebRTCService : Service() {
         webSocketClient.connect(webSocketUrl)
     }
 
+    fun reconnect() {
+        handler.post {
+            try {
+                updateNotification("Reconnecting...")
+                webSocketClient.disconnect()
+                cleanupWebRTCResources()
+                Thread.sleep(1000)
+                initializeWebRTC()
+                connectWebSocket()
+            } catch (e: Exception) {
+                Log.e("WebRTCService", "Reconnect error", e)
+                updateNotification("Reconnect failed")
+            }
+        }
+    }
+
     private fun joinRoom() {
         val message = JSONObject().apply {
             put("action", "join")
@@ -156,9 +194,7 @@ class WebRTCService : Service() {
             "offer" -> handleOffer(message)
             "answer" -> handleAnswer(message)
             "ice_candidate" -> handleIceCandidate(message)
-            "room_info" -> {
-                // Handle room info updates if needed
-            }
+            "room_info" -> {}
             else -> Log.w("WebRTCService", "Unknown message type")
         }
     }
@@ -190,10 +226,15 @@ class WebRTCService : Service() {
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            // Указываем предпочтение кодека VP8 для совместимости с браузерами
+            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "VP8"))
+            // Альтернативно можно указать H.264 с определенным профилем
+            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "H264"))
         }
 
         webRTCClient.peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
+                // Обработка успешного создания answer
                 webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
                         sendSessionDescription(desc)
@@ -324,19 +365,21 @@ class WebRTCService : Service() {
 
     override fun onDestroy() {
         Log.d("WebRTCService", "Service destroyed")
-        cleanupResources()
+        cleanupAllResources()
         super.onDestroy()
     }
 
-    private fun cleanupResources() {
-        try {
-            webSocketClient.disconnect()
-            webRTCClient.close()
-            eglBase.release()
-            localView?.release()
-            remoteView?.release()
-        } catch (e: Exception) {
-            Log.e("WebRTCService", "Cleanup error", e)
+    private fun cleanupAllResources() {
+        cleanupWebRTCResources()
+        webSocketClient.disconnect()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        intent?.action?.let {
+            if (it == "RECONNECT") {
+                reconnect()
+            }
         }
+        return START_STICKY
     }
 }
