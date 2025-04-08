@@ -63,8 +63,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        //startWebRTCService()
-        //finish() // Закрываем Activity, оставляя только сервис
+        startWebRTCService()
+        finish() // Закрываем Activity, оставляя только сервис
 
         if (checkAllPermissionsGranted()) {
             initializeComponents()
@@ -74,21 +74,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-//    private fun startWebRTCService() {
-//        val serviceIntent = Intent(this, WebRTCService::class.java)
-//
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-//            val notification = NotificationCompat.Builder(this, "webrtc_channel")
-//                .setContentTitle("WebRTC соединение")
-//                .setContentText("Поддержание видеосвязи")
-//                .setSmallIcon(R.drawable.ic_launcher_foreground)  // Используем стандартную иконку
-//                .build()
-//
-//            ContextCompat.startForegroundService(this, serviceIntent)
-//        } else {
-//            startService(serviceIntent)
-//        }
-//    }
+    private fun startWebRTCService() {
+        val serviceIntent = Intent(this, WebRTCService::class.java)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notification = NotificationCompat.Builder(this, "webrtc_channel")
+                .setContentTitle("WebRTC соединение")
+                .setContentText("Поддержание видеосвязи")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)  // Используем стандартную иконку
+                .build()
+
+            ContextCompat.startForegroundService(this, serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
 
     private fun initializeComponents() {
         cleanupResources()

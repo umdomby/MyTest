@@ -35,7 +35,7 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".WebRTCService"
+            android:name=".com.example.mytest.WebRTCService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
