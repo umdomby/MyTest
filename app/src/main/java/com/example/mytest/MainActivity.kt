@@ -45,8 +45,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private var currentUsername = ""
-    private var currentRoom = ""
+    private var currentUsername by mutableStateOf("")
+    private var currentRoom by mutableStateOf("")
     private var isConnected by mutableStateOf(false)
     private var isCallActive by mutableStateOf(false)
     private var usersInRoom by mutableStateOf(emptyList<String>())
@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         if (permissions.all { it.value }) {
             initializeWebRTC()
+            initializeWebSocket()
             setUI()
         } else {
             showToast("Camera and microphone permissions required")
@@ -74,6 +75,7 @@ class MainActivity : ComponentActivity() {
 
         if (checkAllPermissionsGranted()) {
             initializeWebRTC()
+            initializeWebSocket()
             setUI()
         } else {
             requestPermissionLauncher.launch(requiredPermissions)
@@ -163,15 +165,21 @@ class MainActivity : ComponentActivity() {
                 )
 
                 Button(
-                    onClick = { connectToRoom(username, room) },
-                    enabled = !isConnected,
+                    onClick = {
+                        if (isConnected) {
+                            disconnectFromRoom()
+                        } else {
+                            connectToRoom(username, room)
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = Color.Black
+                        containerColor = if (isConnected) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary,
+                        contentColor = if (isConnected) Color.White else Color.Black
                     )
                 ) {
-                    Text(if (isConnected) "Connected" else "Connect")
+                    Text(if (isConnected) "Disconnect" else "Connect")
                 }
 
                 if (isConnected) {
@@ -244,9 +252,30 @@ class MainActivity : ComponentActivity() {
                 put("username", username)
             }
             webSocketClient.sendRaw(joinMessage.toString())
+            isConnected = true
         } catch (e: Exception) {
             errorMessage = "Connection error: ${e.message}"
         }
+    }
+
+    private fun disconnectFromRoom() {
+        errorMessage = ""
+        val leaveMessage = JSONObject().apply {
+            put("action", "leave")
+            put("room", currentRoom)
+            put("username", currentUsername)
+        }
+        webSocketClient.sendRaw(leaveMessage.toString())
+        webSocketClient.disconnect()
+
+        // Reset state
+        isConnected = false
+        isCallActive = false
+        usersInRoom = emptyList()
+
+        // Reinitialize WebRTC for new call
+        webRTCClient.close()
+        initializeWebRTC()
     }
 
     private fun startCall() {
@@ -299,8 +328,18 @@ class MainActivity : ComponentActivity() {
 
     private fun endCall() {
         errorMessage = ""
+
+        // Send hangup message
+        val hangupMessage = JSONObject().apply {
+            put("type", "hangup")
+            put("target", usersInRoom.firstOrNull { it != currentUsername })
+        }
+        webSocketClient.sendRaw(hangupMessage.toString())
+
+        // Reset WebRTC
         webRTCClient.close()
         initializeWebRTC()
+
         isCallActive = false
     }
 
@@ -394,6 +433,13 @@ class MainActivity : ComponentActivity() {
         webRTCClient.peerConnection.addIceCandidate(candidate)
     }
 
+    private fun handleHangup(message: JSONObject) {
+        runOnUiThread {
+            endCall()
+            showToast("Call ended by remote peer")
+        }
+    }
+
     private fun sendIceCandidate(candidate: IceCandidate) {
         val message = JSONObject().apply {
             put("type", "ice_candidate")
@@ -415,6 +461,7 @@ class MainActivity : ComponentActivity() {
                 "offer" -> handleOffer(message)
                 "answer" -> handleAnswer(message)
                 "ice_candidate" -> handleIceCandidate(message)
+                "hangup" -> handleHangup(message)
                 "error" -> errorMessage = message.getString("message")
                 "room_info" -> {
                     val users = mutableListOf<String>()
@@ -477,7 +524,9 @@ class MainActivity : ComponentActivity() {
                 override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
             }
         )
+    }
 
+    private fun initializeWebSocket() {
         webSocketClient = WebSocketClient(object : WebSocketListener {
             override fun onMessage(message: JSONObject) = handleWebSocketMessage(message)
             override fun onConnected() {
@@ -486,8 +535,8 @@ class MainActivity : ComponentActivity() {
             }
             override fun onDisconnected() {
                 isConnected = false
+                isCallActive = false
                 showToast("Disconnected from server")
-                runOnUiThread { endCall() }
             }
             override fun onError(error: String) {
                 errorMessage = error
@@ -509,4 +558,3 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
-
