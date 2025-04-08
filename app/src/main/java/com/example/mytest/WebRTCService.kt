@@ -19,20 +19,10 @@ class WebRTCService : Service() {
     private var localView: SurfaceViewRenderer? = null
     private var remoteView: SurfaceViewRenderer? = null
 
-    // Configuration
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://anybet.site/ws"
 
-    // Constants
-    private companion object {
-        const val VIDEO_WIDTH = 640
-        const val VIDEO_HEIGHT = 480
-        const val VIDEO_FPS = 30
-        const val ICE_CONNECTION_TIMEOUT_MS = 10000L
-    }
-
-    // Notification
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
     private val handler = Handler(Looper.getMainLooper())
@@ -78,13 +68,11 @@ class WebRTCService : Service() {
             init(eglBase.eglBaseContext, null)
             setMirror(true)
             setEnableHardwareScaler(true)
-            setZOrderMediaOverlay(true)
         }
 
         remoteView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setEnableHardwareScaler(true)
-            setZOrderMediaOverlay(true)
         }
 
         webRTCClient = WebRTCClient(
@@ -100,20 +88,10 @@ class WebRTCService : Service() {
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                     Log.d("WebRTCService", "ICE connection state: $state")
                     when (state) {
-                        PeerConnection.IceConnectionState.CHECKING -> {
-                            handler.postDelayed({
-                                if (webRTCClient.peerConnection.iceConnectionState() ==
-                                    PeerConnection.IceConnectionState.CHECKING) {
-                                    reconnect()
-                                }
-                            }, ICE_CONNECTION_TIMEOUT_MS)
-                        }
                         PeerConnection.IceConnectionState.CONNECTED ->
                             updateNotification("Call connected")
                         PeerConnection.IceConnectionState.DISCONNECTED ->
-                            reconnect()
-                        PeerConnection.IceConnectionState.FAILED ->
-                            reconnect()
+                            updateNotification("Call disconnected")
                         else -> {}
                     }
                 }
@@ -131,9 +109,6 @@ class WebRTCService : Service() {
                     transceiver?.receiver?.track()?.let { track ->
                         if (track.kind() == "video") {
                             (track as VideoTrack).addSink(remoteView)
-                            updateNotification("Video stream received")
-                        } else if (track.kind() == "audio") {
-                            updateNotification("Audio stream received")
                         }
                     }
                 }
@@ -176,13 +151,11 @@ class WebRTCService : Service() {
             override fun onDisconnected() {
                 Log.d("WebRTCService", "WebSocket disconnected")
                 updateNotification("Disconnected from server")
-                reconnect()
             }
 
             override fun onError(error: String) {
                 Log.e("WebRTCService", "WebSocket error: $error")
                 updateNotification("Error: ${error.take(30)}...")
-                reconnect()
             }
         })
 
@@ -195,10 +168,9 @@ class WebRTCService : Service() {
                 updateNotification("Reconnecting...")
                 webSocketClient.disconnect()
                 cleanupWebRTCResources()
-                handler.postDelayed({
-                    initializeWebRTC()
-                    connectWebSocket()
-                }, 1000)
+                Thread.sleep(1000)
+                initializeWebRTC()
+                connectWebSocket()
             } catch (e: Exception) {
                 Log.e("WebRTCService", "Reconnect error", e)
                 updateNotification("Reconnect failed")
@@ -235,27 +207,18 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
-            // Modify SDP for better browser compatibility
-            val modifiedSdp = sessionDescription.description
-                .replace("profile-level-id=42e01f", "profile-level-id=42e01f;packetization-mode=1")
-                .replace("a=fmtp:126", "a=fmtp:126 profile-level-id=42e01f;packetization-mode=1")
-
-            val modifiedDesc = SessionDescription(sessionDescription.type, modifiedSdp)
-
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     createAnswer()
                 }
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Set remote desc failed: $error")
-                    reconnect()
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
-            }, modifiedDesc)
+            }, sessionDescription)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling offer", e)
-            reconnect()
         }
     }
 
@@ -263,34 +226,28 @@ class WebRTCService : Service() {
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            // Prioritize VP8 for better browser compatibility
-            optional.add(MediaConstraints.KeyValuePair("googCodecPreferences", "VP8,H264"))
+            // Указываем предпочтение кодека VP8 для совместимости с браузерами
+            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "VP8"))
+            // Альтернативно можно указать H.264 с определенным профилем
+            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "H264"))
         }
 
         webRTCClient.peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
-                // Modify SDP for better compatibility
-                val modifiedSdp = desc.description
-                    .replace("profile-level-id=42e01f", "profile-level-id=42e01f;packetization-mode=1")
-                    .replace("a=fmtp:126", "a=fmtp:126 profile-level-id=42e01f;packetization-mode=1")
-
-                val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
-
+                // Обработка успешного создания answer
                 webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
-                        sendSessionDescription(modifiedDesc)
+                        sendSessionDescription(desc)
                     }
                     override fun onSetFailure(error: String) {
                         Log.e("WebRTCService", "Set local desc failed: $error")
-                        reconnect()
                     }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(error: String) {}
-                }, modifiedDesc)
+                }, desc)
             }
             override fun onCreateFailure(error: String) {
                 Log.e("WebRTCService", "Create answer failed: $error")
-                reconnect()
             }
             override fun onSetSuccess() {}
             override fun onSetFailure(error: String) {}
@@ -311,7 +268,6 @@ class WebRTCService : Service() {
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error sending SDP", e)
-            reconnect()
         }
     }
 
@@ -323,27 +279,18 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
-            // Modify SDP for better compatibility
-            val modifiedSdp = sessionDescription.description
-                .replace("profile-level-id=42e01f", "profile-level-id=42e01f;packetization-mode=1")
-                .replace("a=fmtp:126", "a=fmtp:126 profile-level-id=42e01f;packetization-mode=1")
-
-            val modifiedDesc = SessionDescription(sessionDescription.type, modifiedSdp)
-
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     Log.d("WebRTCService", "Answer accepted")
                 }
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Set answer failed: $error")
-                    reconnect()
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
-            }, modifiedDesc)
+            }, sessionDescription)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling answer", e)
-            reconnect()
         }
     }
 
@@ -387,7 +334,6 @@ class WebRTCService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "WebRTC streaming service"
-                setShowBadge(false)
             }
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(channel)
@@ -401,8 +347,6 @@ class WebRTCService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
     }
 
@@ -413,8 +357,6 @@ class WebRTCService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
