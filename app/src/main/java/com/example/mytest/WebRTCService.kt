@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -56,7 +57,12 @@ class WebRTCService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(notificationId, createNotification())
+        // Для Android 14+ указываем тип сервиса
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(notificationId, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(notificationId, createNotification())
+        }
 
         initializeWebRTC()
         connectWebSocket()
@@ -97,7 +103,6 @@ class WebRTCService : Service() {
                     handler.post { scheduleReconnect() }
                 }
             }
-            // Остальные методы оставлены пустыми
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
@@ -128,7 +133,7 @@ class WebRTCService : Service() {
 
         localVideoTrack = peerConnectionFactory.createVideoTrack("video_track", videoSource)
 
-        // Add tracks to peer connection
+        // Добавляем треки в peer connection, но трансляция начнется только при подключении второго участника
         peerConnection?.addTrack(localAudioTrack!!, listOf("stream_id"))
         peerConnection?.addTrack(localVideoTrack!!, listOf("stream_id"))
     }
@@ -146,7 +151,7 @@ class WebRTCService : Service() {
             .build()
 
         val request = Request.Builder()
-            .url("wss://your-server.com/ws")
+            .url("wss://anybet.site/ws")
             .build()
 
         webSocket = client.newWebSocket(request, object : okhttp3.WebSocketListener() {
@@ -185,9 +190,6 @@ class WebRTCService : Service() {
             put("username", userName)
         }
         webSocket?.send(message.toString())
-
-        // Создаем оффер для начала трансляции
-        createOffer()
     }
 
     private fun createOffer() {
@@ -336,21 +338,12 @@ class WebRTCService : Service() {
     }
 
     private fun createNotification(): Notification {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationCompat.Builder(this, channelId)
-                .setContentTitle("WebRTC трансляция")
-                .setContentText("Трансляция видео и звука в комнату $roomName")
-                .setSmallIcon(android.R.drawable.ic_dialog_info) // Используем системную иконку
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .build()
-        } else {
-            NotificationCompat.Builder(this)
-                .setContentTitle("WebRTC трансляция")
-                .setContentText("Трансляция видео и звука в комнату $roomName")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .build()
-        }
+        return NotificationCompat.Builder(this, channelId)
+            .setContentTitle("WebRTC трансляция")
+            .setContentText("Ожидание подключения к комнате $roomName")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
     }
 
     override fun onDestroy() {
