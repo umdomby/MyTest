@@ -55,7 +55,7 @@ class WebRTCClient(
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
             keyType = PeerConnection.KeyType.ECDSA
-                //enableDtlsSrtp = true
+            enableDtlsSrtp = true
         }
 
         peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
