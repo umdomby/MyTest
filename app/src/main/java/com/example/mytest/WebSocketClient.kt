@@ -52,7 +52,7 @@ class WebSocketClient(private val listener: WebSocketListener) {
         })
     }
 
-    fun send(message: JSONObject) {
+    fun send(message: String) {
         webSocket?.send(message.toString())
     }
 
