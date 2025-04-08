@@ -9,7 +9,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import org.webrtc.*
-import java.util.concurrent.TimeUnit
 
 class WebRTCService : Service() {
     private val binder = LocalBinder()
@@ -27,6 +26,7 @@ class WebRTCService : Service() {
     // Notification
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
+    private val handler = Handler(Looper.getMainLooper())
 
     inner class LocalBinder : Binder() {
         fun getService(): WebRTCService = this@WebRTCService
@@ -37,7 +37,6 @@ class WebRTCService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("WebRTCService", "Service onCreate")
-
         createNotificationChannel()
         startForegroundService()
         initializeWebRTC()
@@ -62,16 +61,20 @@ class WebRTCService : Service() {
 
     private fun initializeWebRTC() {
         Log.d("WebRTCService", "Initializing WebRTC")
+        cleanupWebRTCResources()
+
         eglBase = EglBase.create()
 
-        // Initialize views (in service this would need a different approach)
+        // Reinitialize views
         localView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setMirror(true)
+            setEnableHardwareScaler(true)
         }
 
         remoteView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
+            setEnableHardwareScaler(true)
         }
 
         webRTCClient = WebRTCClient(
@@ -95,7 +98,6 @@ class WebRTCService : Service() {
                     }
                 }
 
-                // Other required overrides
                 override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
                 override fun onIceConnectionReceivingChange(p0: Boolean) {}
                 override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
@@ -114,6 +116,28 @@ class WebRTCService : Service() {
                 }
             }
         )
+    }
+
+    private fun cleanupWebRTCResources() {
+        try {
+            webRTCClient?.close()
+
+            localView?.let {
+                it.clearImage()
+                it.release()
+                localView = null
+            }
+
+            remoteView?.let {
+                it.clearImage()
+                it.release()
+                remoteView = null
+            }
+
+            eglBase?.release()
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error cleaning up WebRTC resources", e)
+        }
     }
 
     private fun connectWebSocket() {
@@ -140,6 +164,29 @@ class WebRTCService : Service() {
         webSocketClient.connect(webSocketUrl)
     }
 
+    fun reconnect() {
+        handler.post {
+            try {
+                updateNotification("Reconnecting...")
+
+                // 1. Disconnect existing connections
+                webSocketClient.disconnect()
+                cleanupWebRTCResources()
+
+                // 2. Wait briefly before reconnecting
+                Thread.sleep(1000)
+
+                // 3. Full reinitialization
+                initializeWebRTC()
+                connectWebSocket()
+
+            } catch (e: Exception) {
+                Log.e("WebRTCService", "Reconnect error", e)
+                updateNotification("Reconnect failed")
+            }
+        }
+    }
+
     private fun joinRoom() {
         val message = JSONObject().apply {
             put("action", "join")
@@ -156,9 +203,7 @@ class WebRTCService : Service() {
             "offer" -> handleOffer(message)
             "answer" -> handleAnswer(message)
             "ice_candidate" -> handleIceCandidate(message)
-            "room_info" -> {
-                // Handle room info updates if needed
-            }
+            "room_info" -> {}
             else -> Log.w("WebRTCService", "Unknown message type")
         }
     }
@@ -324,19 +369,21 @@ class WebRTCService : Service() {
 
     override fun onDestroy() {
         Log.d("WebRTCService", "Service destroyed")
-        cleanupResources()
+        cleanupAllResources()
         super.onDestroy()
     }
 
-    private fun cleanupResources() {
-        try {
-            webSocketClient.disconnect()
-            webRTCClient.close()
-            eglBase.release()
-            localView?.release()
-            remoteView?.release()
-        } catch (e: Exception) {
-            Log.e("WebRTCService", "Cleanup error", e)
+    private fun cleanupAllResources() {
+        cleanupWebRTCResources()
+        webSocketClient.disconnect()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        intent?.action?.let {
+            if (it == "RECONNECT") {
+                reconnect()
+            }
         }
+        return START_STICKY
     }
 }
