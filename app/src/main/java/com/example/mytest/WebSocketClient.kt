@@ -53,6 +53,7 @@ class WebSocketClient(private val listener: WebSocketListener) {
     }
 
     fun send(message: String) {
+
         webSocket?.send(message.toString())
     }
 
