@@ -237,7 +237,7 @@ class MainActivity : ComponentActivity() {
         errorMessage = ""
 
         try {
-            webSocketClient.connect("wss://your-websocket-server.com/ws")
+            webSocketClient.connect("wss://anybet.site/ws")
             val joinMessage = JSONObject().apply {
                 put("action", "join")
                 put("room", room)
