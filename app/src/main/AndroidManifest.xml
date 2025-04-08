@@ -10,7 +10,7 @@
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+<!--    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />-->
 
 
     <application
@@ -35,10 +35,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service
-            android:name=".WebRTCService"
-            android:foregroundServiceType="mediaProjection|camera|microphone"
-            android:exported="false" />
+        <service android:name=".WebRTCService"
+            android:enabled="true"
+            android:exported="false"/>
     </application>
 
 </manifest>
