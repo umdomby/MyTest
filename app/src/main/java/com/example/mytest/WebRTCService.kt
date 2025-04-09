@@ -1,4 +1,3 @@
-// WebRTCService.kt
 package com.example.mytest
 
 import android.app.*
@@ -34,7 +33,7 @@ class WebRTCService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("WebRTCService", "Сервис создан")
+        Log.d("WebRTCService", "Service created")
         createNotificationChannel()
         startForegroundService()
         initializeWebRTC()
@@ -42,7 +41,6 @@ class WebRTCService : Service() {
     }
 
     private fun startForegroundService() {
-
         val notification = createNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -55,7 +53,6 @@ class WebRTCService : Service() {
                             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 )
             } catch (e: SecurityException) {
-                // Fallback без специфичных типов сервиса
                 Log.e("WebRTCService", "SecurityException: ${e.message}")
                 startForeground(notificationId, notification)
             }
@@ -65,7 +62,7 @@ class WebRTCService : Service() {
     }
 
     private fun initializeWebRTC() {
-        Log.d("WebRTCService", "Инициализация WebRTC")
+        Log.d("WebRTCService", "Initializing WebRTC")
         cleanupWebRTCResources()
 
         eglBase = EglBase.create()
@@ -91,12 +88,12 @@ class WebRTCService : Service() {
                 }
 
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                    Log.d("WebRTCService", "Состояние ICE соединения: $state")
+                    Log.d("WebRTCService", "ICE connection state: $state")
                     when (state) {
                         PeerConnection.IceConnectionState.CONNECTED ->
-                            updateNotification("Соединение установлено")
+                            updateNotification("Connection established")
                         PeerConnection.IceConnectionState.DISCONNECTED ->
-                            updateNotification("Соединение разорвано")
+                            updateNotification("Connection lost")
                         else -> {}
                     }
                 }
@@ -126,7 +123,7 @@ class WebRTCService : Service() {
             webRTCClient.close()
             eglBase.release()
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Ошибка очистки ресурсов WebRTC", e)
+            Log.e("WebRTCService", "Error cleaning WebRTC resources", e)
         }
     }
 
@@ -137,24 +134,24 @@ class WebRTCService : Service() {
                     val message = JSONObject(text)
                     handleWebSocketMessage(message)
                 } catch (e: Exception) {
-                    Log.e("WebRTCService", "Ошибка парсинга сообщения WebSocket", e)
+                    Log.e("WebRTCService", "WebSocket message parse error", e)
                 }
             }
 
             override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                Log.d("WebRTCService", "WebSocket подключен")
-                updateNotification("Подключено к серверу")
+                Log.d("WebRTCService", "WebSocket connected")
+                updateNotification("Connected to server")
                 joinRoom()
             }
 
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
-                Log.d("WebRTCService", "WebSocket отключен")
-                updateNotification("Отключено от сервера")
+                Log.d("WebRTCService", "WebSocket disconnected")
+                updateNotification("Disconnected from server")
             }
 
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
-                Log.e("WebRTCService", "Ошибка WebSocket: ${t.message}")
-                updateNotification("Ошибка: ${t.message?.take(30)}...")
+                Log.e("WebRTCService", "WebSocket error: ${t.message}")
+                updateNotification("Error: ${t.message?.take(30)}...")
             }
         })
 
@@ -164,15 +161,15 @@ class WebRTCService : Service() {
     fun reconnect() {
         handler.post {
             try {
-                updateNotification("Переподключение...")
+                updateNotification("Reconnecting...")
                 webSocketClient.disconnect()
                 cleanupWebRTCResources()
                 Thread.sleep(1000)
                 initializeWebRTC()
                 connectWebSocket()
             } catch (e: Exception) {
-                Log.e("WebRTCService", "Ошибка переподключения", e)
-                updateNotification("Ошибка переподключения")
+                Log.e("WebRTCService", "Reconnection error", e)
+                updateNotification("Reconnection error")
             }
         }
     }
@@ -187,14 +184,14 @@ class WebRTCService : Service() {
     }
 
     private fun handleWebSocketMessage(message: JSONObject) {
-        Log.d("WebRTCService", "Получено: $message")
+        Log.d("WebRTCService", "Received: $message")
 
         when (message.optString("type")) {
             "offer" -> handleOffer(message)
             "answer" -> handleAnswer(message)
             "ice_candidate" -> handleIceCandidate(message)
             "room_info" -> {}
-            else -> Log.w("WebRTCService", "Неизвестный тип сообщения")
+            else -> Log.w("WebRTCService", "Unknown message type")
         }
     }
 
@@ -211,13 +208,13 @@ class WebRTCService : Service() {
                     createAnswer()
                 }
                 override fun onSetFailure(error: String) {
-                    Log.e("WebRTCService", "Ошибка установки удаленного описания: $error")
+                    Log.e("WebRTCService", "Error setting remote description: $error")
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
             }, sessionDescription)
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Ошибка обработки offer", e)
+            Log.e("WebRTCService", "Error handling offer", e)
         }
     }
 
@@ -234,14 +231,14 @@ class WebRTCService : Service() {
                         sendSessionDescription(desc)
                     }
                     override fun onSetFailure(error: String) {
-                        Log.e("WebRTCService", "Ошибка установки локального описания: $error")
+                        Log.e("WebRTCService", "Error setting local description: $error")
                     }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(error: String) {}
                 }, desc)
             }
             override fun onCreateFailure(error: String) {
-                Log.e("WebRTCService", "Ошибка создания answer: $error")
+                Log.e("WebRTCService", "Error creating answer: $error")
             }
             override fun onSetSuccess() {}
             override fun onSetFailure(error: String) {}
@@ -262,7 +259,7 @@ class WebRTCService : Service() {
             }
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Ошибка отправки SDP", e)
+            Log.e("WebRTCService", "Error sending SDP", e)
         }
     }
 
@@ -276,16 +273,16 @@ class WebRTCService : Service() {
 
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
-                    Log.d("WebRTCService", "Answer принят")
+                    Log.d("WebRTCService", "Answer accepted")
                 }
                 override fun onSetFailure(error: String) {
-                    Log.e("WebRTCService", "Ошибка установки answer: $error")
+                    Log.e("WebRTCService", "Error setting answer: $error")
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
             }, sessionDescription)
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Ошибка обработки answer", e)
+            Log.e("WebRTCService", "Error handling answer", e)
         }
     }
 
@@ -299,7 +296,7 @@ class WebRTCService : Service() {
             )
             webRTCClient.peerConnection.addIceCandidate(iceCandidate)
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Ошибка обработки ICE candidate", e)
+            Log.e("WebRTCService", "Error handling ICE candidate", e)
         }
     }
 
@@ -317,7 +314,7 @@ class WebRTCService : Service() {
             }
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Ошибка отправки ICE candidate", e)
+            Log.e("WebRTCService", "Error sending ICE candidate", e)
         }
     }
 
@@ -325,10 +322,10 @@ class WebRTCService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "WebRTC Сервис",
+                "WebRTC Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Сервис WebRTC трансляции"
+                description = "WebRTC streaming service"
             }
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(channel)
@@ -337,8 +334,8 @@ class WebRTCService : Service() {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("WebRTC Сервис")
-            .setContentText("Активен в комнате: $roomName")
+            .setContentTitle("WebRTC Service")
+            .setContentText("Active in room: $roomName")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -347,7 +344,7 @@ class WebRTCService : Service() {
 
     private fun updateNotification(text: String) {
         val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("WebRTC Сервис")
+            .setContentTitle("WebRTC Service")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -359,7 +356,7 @@ class WebRTCService : Service() {
     }
 
     override fun onDestroy() {
-        Log.d("WebRTCService", "Сервис уничтожен")
+        Log.d("WebRTCService", "Service destroyed")
         cleanupAllResources()
         super.onDestroy()
     }

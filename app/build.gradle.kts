@@ -47,6 +47,9 @@ dependencies {
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
+    // Для работы с корутинами
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.5.2")
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

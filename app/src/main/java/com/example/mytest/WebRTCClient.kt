@@ -1,4 +1,3 @@
-// WebRTCClient.kt
 package com.example.mytest
 
 import android.content.Context
@@ -34,8 +33,8 @@ class WebRTCClient(
 
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            true,  // enableIntelVp8Encoder
-            true   // enableH264HighProfile
+            true,
+            true
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
@@ -113,10 +112,10 @@ class WebRTCClient(
     private fun createCameraCapturer(): VideoCapturer? {
         return Camera2Enumerator(context).run {
             deviceNames.find { isFrontFacing(it) }?.let {
-                Log.d("WebRTC", "Используется фронтальная камера: $it")
+                Log.d("WebRTC", "Using front camera: $it")
                 createCapturer(it, null)
             } ?: deviceNames.firstOrNull()?.let {
-                Log.d("WebRTC", "Используется первая доступная камера: $it")
+                Log.d("WebRTC", "Using first available camera: $it")
                 createCapturer(it, null)
             }
         }
@@ -130,7 +129,7 @@ class WebRTCClient(
             surfaceTextureHelper?.dispose()
             peerConnection.dispose()
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Ошибка при закрытии ресурсов", e)
+            Log.e("WebRTCClient", "Error closing resources", e)
         }
     }
 }

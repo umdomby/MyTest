@@ -1,4 +1,3 @@
-// MainActivity.kt
 package com.example.mytest
 
 import android.Manifest
@@ -25,9 +24,9 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         if (permissions.all { it.value }) {
             startWebRTCService()
-            showToast("Сервис успешно запущен")
+            showToast("Service started successfully")
         } else {
-            showToast("Не все разрешения предоставлены")
+            showToast("Not all permissions granted")
             finish()
         }
     }
@@ -37,7 +36,7 @@ class MainActivity : ComponentActivity() {
 
         if (checkAllPermissionsGranted()) {
             startWebRTCService()
-            showToast("Сервис успешно запущен")
+            showToast("Service started successfully")
         } else {
             requestPermissionLauncher.launch(requiredPermissions)
         }
@@ -48,8 +47,8 @@ class MainActivity : ComponentActivity() {
             val serviceIntent = Intent(this, WebRTCService::class.java)
             ContextCompat.startForegroundService(this, serviceIntent)
         } catch (e: Exception) {
-            showToast("Ошибка запуска сервиса: ${e.message}")
-            Log.e("MainActivity", "Ошибка запуска сервиса", e)
+            showToast("Error starting service: ${e.message}")
+            Log.e("MainActivity", "Service start error", e)
         }
     }
 
