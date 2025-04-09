@@ -123,10 +123,17 @@ class WebRTCClient(
 
     fun close() {
         try {
-            videoCapturer?.stopCapture()
-            videoCapturer?.dispose()
-            localVideoTrack?.dispose()
+            videoCapturer?.let {
+                it.stopCapture()
+                it.dispose()
+            }
+            localVideoTrack?.let {
+                it.removeSink(localView)
+                it.dispose()
+            }
+            localAudioTrack?.dispose()
             surfaceTextureHelper?.dispose()
+            peerConnection.close()
             peerConnection.dispose()
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error closing resources", e)

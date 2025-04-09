@@ -79,7 +79,7 @@ class WebRTCService : Service() {
             setEnableHardwareScaler(true)
         }
 
-        remoteView = SurfaceViewRenderer(this).apply { // Remove 'val' to use the class property
+        remoteView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setEnableHardwareScaler(true)
         }
