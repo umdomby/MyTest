@@ -15,35 +15,34 @@ class MainActivity : ComponentActivity() {
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
         Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.POST_NOTIFICATIONS,
-        Manifest.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION,
-        Manifest.permission.FOREGROUND_SERVICE_MICROPHONE,
-        Manifest.permission.FOREGROUND_SERVICE_CAMERA
+        Manifest.permission.POST_NOTIFICATIONS
     )
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions.all { it.value }) {
-            startWebRTCService()
-            showToast("Service started successfully")
+            requestMediaProjection()
         } else {
-            showToast("Not all permissions granted")
+            showToast("Не все разрешения предоставлены")
             finish()
         }
     }
+
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            startWebRTCService()
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            startWebRTCService(result.data!!)
         } else {
-            showToast("Media projection permission denied")
+            showToast("Доступ к записи экрана не предоставлен")
             finish()
         }
     }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main) // Добавлен layout
 
         if (checkAllPermissionsGranted()) {
             requestMediaProjection()
@@ -57,13 +56,18 @@ class MainActivity : ComponentActivity() {
         mediaProjectionLauncher.launch(mediaManager.createScreenCaptureIntent())
     }
 
-    private fun startWebRTCService() {
+    private fun startWebRTCService(resultData: Intent) {
         try {
-            val serviceIntent = Intent(this, WebRTCService::class.java)
+            val serviceIntent = Intent(this, WebRTCService::class.java).apply {
+                putExtra("resultCode", RESULT_OK)
+                putExtra("resultData", resultData)
+            }
             ContextCompat.startForegroundService(this, serviceIntent)
+            showToast("Сервис запущен")
         } catch (e: Exception) {
-            showToast("Error starting service: ${e.message}")
-            Log.e("MainActivity", "Service start error", e)
+            showToast("Ошибка запуска сервиса: ${e.message}")
+            Log.e("MainActivity", "Ошибка запуска сервиса", e)
+            finish()
         }
     }
 
