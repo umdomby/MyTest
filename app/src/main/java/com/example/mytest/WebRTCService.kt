@@ -1,4 +1,4 @@
-// file: src/main/java/com/example/mytest/WebRTCService.kt
+// WebRTCService.kt
 package com.example.mytest
 
 import android.app.*
@@ -226,25 +226,24 @@ class WebRTCService : Service() {
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            // Указываем предпочтение кодека VP8 для совместимости с браузерами
-            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "VP8"))
-            // Альтернативно можно указать H.264 с определенным профилем
-            mandatory.add(MediaConstraints.KeyValuePair("googPreferredVideoCodec", "H264"))
         }
 
         webRTCClient.peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
-                // Обработка успешного создания answer
+                // Модифицируем SDP для лучшей совместимости
+                val modifiedSdp = preferCodecs(desc.description)
+                val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
+
                 webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
-                        sendSessionDescription(desc)
+                        sendSessionDescription(modifiedDesc)
                     }
                     override fun onSetFailure(error: String) {
                         Log.e("WebRTCService", "Set local desc failed: $error")
                     }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(error: String) {}
-                }, desc)
+                }, modifiedDesc)
             }
             override fun onCreateFailure(error: String) {
                 Log.e("WebRTCService", "Create answer failed: $error")
@@ -252,6 +251,14 @@ class WebRTCService : Service() {
             override fun onSetSuccess() {}
             override fun onSetFailure(error: String) {}
         }, constraints)
+    }
+
+    private fun preferCodecs(sdp: String): String {
+        // Устанавливаем приоритет кодеков: VP8 > H264 > VP9
+        return sdp.replaceFirst(
+            "a=rtpmap:(\\d+) VP8/90000".toRegex(),
+            "a=rtpmap:\$1 VP8/90000\r\na=fmtp:\$1 x-google-start-bitrate=800\r\na=rtcp-fb:\$1 goog-remb\r\na=rtcp-fb:\$1 transport-cc\r\na=rtcp-fb:\$1 ccm fir\r\na=rtcp-fb:\$1 nack\r\na=rtcp-fb:\$1 nack pli"
+        )
     }
 
     private fun sendSessionDescription(desc: SessionDescription) {
