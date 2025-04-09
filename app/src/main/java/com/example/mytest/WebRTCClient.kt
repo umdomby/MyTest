@@ -46,16 +46,21 @@ class WebRTCClient(
     }
 
     private fun createPeerConnection(): PeerConnection {
-        val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-        )
-
-        val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
+        // Create PeerConnection with Unified Plan
+        val rtcConfig = PeerConnection.RTCConfiguration(listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
+        )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            iceTransportsType = PeerConnection.IceTransportsType.ALL
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
+            candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
+            keyType = PeerConnection.KeyType.ECDSA
+            // enableDtlsSrtp is now always enabled in newer versions
         }
 
         return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
