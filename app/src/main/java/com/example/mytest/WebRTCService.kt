@@ -116,7 +116,12 @@ class WebRTCService : Service() {
         override fun onIceConnectionReceivingChange(p0: Boolean) {}
         override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
         override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
-        override fun onAddStream(p0: MediaStream?) {}
+        override fun onAddStream(stream: MediaStream?) {
+            stream?.videoTracks?.forEach { track ->
+                Log.d("WebRTCService", "Adding remote video track from stream")
+                track.addSink(remoteView)
+            }
+        }
         override fun onRemoveStream(p0: MediaStream?) {}
         override fun onDataChannel(p0: DataChannel?) {}
         override fun onRenegotiationNeeded() {}
@@ -125,9 +130,12 @@ class WebRTCService : Service() {
             transceiver?.receiver?.track()?.let { track ->
                 handler.post {
                     when (track.kind()) {
-                        "video" -> (track as VideoTrack).addSink(remoteView)
+                        "video" -> {
+                            Log.d("WebRTCService", "Video track received")
+                            (track as VideoTrack).addSink(remoteView)
+                        }
                         "audio" -> {
-                            // Аудио трек автоматически обрабатывается
+                            Log.d("WebRTCService", "Audio track received")
                         }
                     }
                 }
@@ -184,7 +192,7 @@ class WebRTCService : Service() {
     private fun scheduleReconnect() {
         handler.postDelayed({
             reconnect()
-        }, 5000) // Reconnect after 5 seconds
+        }, 5000)
     }
 
     fun reconnect() {
@@ -244,7 +252,6 @@ class WebRTCService : Service() {
 
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
-                    // Добавляем обязательные constraints для ответа
                     val constraints = MediaConstraints().apply {
                         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
                         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
@@ -262,12 +269,8 @@ class WebRTCService : Service() {
         }
     }
 
-    private fun createAnswer(constraints1: MediaConstraints) {
+    private fun createAnswer(constraints: MediaConstraints) {
         try {
-            val constraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            }
             webRTCClient.peerConnection.createAnswer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     Log.d("WebRTCService", "Created answer: ${desc.description}")
@@ -385,7 +388,7 @@ class WebRTCService : Service() {
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("WebRTC Service")
             .setContentText("Active in room: $roomName")
-            .setSmallIcon(R.drawable.ic_notification) // Make sure you have this icon
+            .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()

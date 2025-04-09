@@ -22,7 +22,12 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions.all { it.value }) {
-            requestMediaProjection()
+            if (isCameraPermissionGranted()) {
+                requestMediaProjection()
+            } else {
+                showToast("Требуется разрешение на использование камеры")
+                finish()
+            }
         } else {
             showToast("Не все разрешения предоставлены")
             finish()
@@ -42,9 +47,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main) // Добавлен layout
+        setContentView(R.layout.activity_main)
 
-        if (checkAllPermissionsGranted()) {
+        if (checkAllPermissionsGranted() && isCameraPermissionGranted()) {
             requestMediaProjection()
         } else {
             requestPermissionLauncher.launch(requiredPermissions)
@@ -73,6 +78,13 @@ class MainActivity : ComponentActivity() {
 
     private fun checkAllPermissionsGranted() = requiredPermissions.all {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun isCameraPermissionGranted(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun showToast(text: String) {

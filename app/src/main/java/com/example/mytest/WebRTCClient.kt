@@ -33,8 +33,8 @@ class WebRTCClient(
 
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            true,  // enableIntelVp8Encoder
-            true   // enableH264HighProfile
+            true,
+            true
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
@@ -46,7 +46,6 @@ class WebRTCClient(
     }
 
     private fun createPeerConnection(): PeerConnection {
-        // Create PeerConnection with Unified Plan
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
@@ -60,7 +59,6 @@ class WebRTCClient(
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
             keyType = PeerConnection.KeyType.ECDSA
-            // enableDtlsSrtp is now always enabled in newer versions
         }
 
         return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
@@ -70,13 +68,17 @@ class WebRTCClient(
         createAudioTrack()
         createVideoTrack()
 
-        // Явно указываем streamId (должен совпадать с тем, что ожидает браузер)
         val streamId = "ARDAMS"
-        localAudioTrack?.let { audioTrack ->
-            peerConnection.addTrack(audioTrack, listOf(streamId))
+        val stream = peerConnectionFactory.createLocalMediaStream(streamId)
+
+        localAudioTrack?.let {
+            stream.addTrack(it)
+            peerConnection.addTrack(it, listOf(streamId))
         }
-        localVideoTrack?.let { videoTrack ->
-            peerConnection.addTrack(videoTrack, listOf(streamId))
+
+        localVideoTrack?.let {
+            stream.addTrack(it)
+            peerConnection.addTrack(it, listOf(streamId))
         }
     }
 
@@ -89,26 +91,34 @@ class WebRTCClient(
         }
 
         val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
-        localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
+        localAudioTrack = peerConnectionFactory.createAudioTrack("ARDAMSa0", audioSource)
     }
 
     private fun createVideoTrack() {
-        videoCapturer = createCameraCapturer()
-        surfaceTextureHelper = SurfaceTextureHelper.create(
-            "CaptureThread",
-            eglBase.eglBaseContext
-        )
+        try {
+            videoCapturer = createCameraCapturer()
+            videoCapturer?.let { capturer ->
+                surfaceTextureHelper = SurfaceTextureHelper.create(
+                    "CaptureThread",
+                    eglBase.eglBaseContext
+                )
 
-        val videoSource = peerConnectionFactory.createVideoSource(false)
-        videoCapturer?.initialize(
-            surfaceTextureHelper,
-            context,
-            videoSource.capturerObserver
-        )
-        videoCapturer?.startCapture(1280, 720, 30)
+                val videoSource = peerConnectionFactory.createVideoSource(false)
+                capturer.initialize(
+                    surfaceTextureHelper,
+                    context,
+                    videoSource.capturerObserver
+                )
+                capturer.startCapture(640, 480, 30)
 
-        localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK", videoSource).apply {
-            addSink(localView)
+                localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
+                    addSink(localView)
+                }
+            } ?: run {
+                Log.e("WebRTCClient", "Failed to create video capturer")
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCClient", "Error creating video track", e)
         }
     }
 

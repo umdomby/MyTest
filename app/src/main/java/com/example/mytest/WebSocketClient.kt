@@ -16,7 +16,7 @@ class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
     private val client = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
-        .hostnameVerifier { _, _ -> true } // Только для отладки!
+        .hostnameVerifier { _, _ -> true }
         .sslSocketFactory(getUnsafeSSLSocketFactory(), getTrustAllCerts()[0] as X509TrustManager)
         .build()
 
@@ -42,6 +42,7 @@ class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
                 override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
             })
     }
+
     fun connect(url: String) {
         val request = Request.Builder()
             .url(url)
