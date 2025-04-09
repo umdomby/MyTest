@@ -27,14 +27,15 @@ class WebRTCClient(
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
+            // Уберите H264HighProfile, так как он может не поддерживаться в браузере
+            .setFieldTrials("WebRTC-H264HighProfile/Disabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            true,
-            true
+            true,  // enableIntelVp8Encoder
+            true   // enableH264HighProfile
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
@@ -70,12 +71,13 @@ class WebRTCClient(
         createAudioTrack()
         createVideoTrack()
 
-        // Добавляем треки в PeerConnection
+        // Явно указываем streamId (должен совпадать с тем, что ожидает браузер)
+        val streamId = "ARDAMS"
         localAudioTrack?.let { audioTrack ->
-            peerConnection.addTrack(audioTrack, listOf("ARDAMS"))
+            peerConnection.addTrack(audioTrack, listOf(streamId))
         }
         localVideoTrack?.let { videoTrack ->
-            peerConnection.addTrack(videoTrack, listOf("ARDAMS"))
+            peerConnection.addTrack(videoTrack, listOf(streamId))
         }
     }
 
