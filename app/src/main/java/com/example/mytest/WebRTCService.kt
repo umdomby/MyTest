@@ -120,8 +120,13 @@ class WebRTCService : Service() {
         override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
         override fun onTrack(transceiver: RtpTransceiver?) {
             transceiver?.receiver?.track()?.let { track ->
-                if (track.kind() == "video") {
-                    (track as VideoTrack).addSink(remoteView)
+                handler.post {
+                    when (track.kind()) {
+                        "video" -> (track as VideoTrack).addSink(remoteView)
+                        "audio" -> {
+                            // Аудио трек автоматически обрабатывается
+                        }
+                    }
                 }
             }
         }
@@ -230,13 +235,18 @@ class WebRTCService : Service() {
         try {
             val sdp = offer.getJSONObject("sdp")
             val sessionDescription = SessionDescription(
-                SessionDescription.Type.fromCanonicalForm(sdp.getString("type")),
+                SessionDescription.Type.OFFER,
                 sdp.getString("sdp")
             )
 
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
-                    createAnswer()
+                    // Добавляем обязательные constraints для ответа
+                    val constraints = MediaConstraints().apply {
+                        mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                    }
+                    createAnswer(constraints)
                 }
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Error setting remote description: $error")
@@ -249,7 +259,7 @@ class WebRTCService : Service() {
         }
     }
 
-    private fun createAnswer() {
+    private fun createAnswer(constraints1: MediaConstraints) {
         try {
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))

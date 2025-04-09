@@ -47,20 +47,15 @@ class WebRTCClient(
 
     private fun createPeerConnection(): PeerConnection {
         val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
         )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-            iceTransportsType = PeerConnection.IceTransportsType.ALL
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
-            candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
-            keyType = PeerConnection.KeyType.ECDSA
         }
 
         return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
@@ -69,6 +64,14 @@ class WebRTCClient(
     private fun createLocalTracks() {
         createAudioTrack()
         createVideoTrack()
+
+        // Добавляем треки в PeerConnection
+        localAudioTrack?.let { audioTrack ->
+            peerConnection.addTrack(audioTrack, listOf("ARDAMS"))
+        }
+        localVideoTrack?.let { videoTrack ->
+            peerConnection.addTrack(videoTrack, listOf("ARDAMS"))
+        }
     }
 
     private fun createAudioTrack() {
@@ -81,9 +84,6 @@ class WebRTCClient(
 
         val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
         localAudioTrack = peerConnectionFactory.createAudioTrack("AUDIO_TRACK", audioSource)
-        localAudioTrack?.let {
-            peerConnection.addTrack(it, listOf("stream_id"))
-        }
     }
 
     private fun createVideoTrack() {
@@ -103,9 +103,6 @@ class WebRTCClient(
 
         localVideoTrack = peerConnectionFactory.createVideoTrack("VIDEO_TRACK", videoSource).apply {
             addSink(localView)
-        }
-        localVideoTrack?.let {
-            peerConnection.addTrack(it, listOf("stream_id"))
         }
     }
 
