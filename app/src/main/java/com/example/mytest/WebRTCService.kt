@@ -267,13 +267,10 @@ class WebRTCService : Service() {
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-                // Добавьте отправку видео
-                mandatory.add(MediaConstraints.KeyValuePair("OfferToSendVideo", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("OfferToSendAudio", "true"))
             }
-
             webRTCClient.peerConnection.createAnswer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
+                    Log.d("WebRTCService", "Created answer: ${desc.description}")
                     webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
                             sendSessionDescription(desc)
@@ -297,8 +294,8 @@ class WebRTCService : Service() {
     }
 
     private fun sendSessionDescription(desc: SessionDescription) {
+        Log.d("WebRTCService", "Sending SDP: ${desc.type} \n${desc.description}")
         try {
-            Log.d("WebRTCService", "Sending SDP: ${desc.type} \n${desc.description}")
             val message = JSONObject().apply {
                 put("type", desc.type.canonicalForm())
                 put("sdp", JSONObject().apply {

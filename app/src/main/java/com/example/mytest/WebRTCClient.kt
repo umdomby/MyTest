@@ -27,8 +27,7 @@ class WebRTCClient(
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            // Уберите H264HighProfile, так как он может не поддерживаться в браузере
-            .setFieldTrials("WebRTC-H264HighProfile/Disabled/")
+            .setFieldTrials("WebRTC-VP8-Forced-Fallback-Encoder/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
