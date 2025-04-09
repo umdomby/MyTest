@@ -12,7 +12,7 @@ class WebRTCClient(
     private val observer: PeerConnection.Observer
 ) {
     lateinit var peerConnectionFactory: PeerConnectionFactory
-    lateinit var peerConnection: PeerConnection
+    var peerConnection: PeerConnection
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: VideoCapturer? = null
