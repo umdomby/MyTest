@@ -1,3 +1,4 @@
+// WebSocketClient.kt
 package com.example.mytest
 
 import android.util.Log
@@ -24,7 +25,7 @@ class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
     }
 
     fun disconnect() {
-        webSocket?.close(1000, "Normal closure")
+        webSocket?.close(1000, "Нормальное закрытие")
         client.dispatcher.executorService.shutdown()
     }
 }
