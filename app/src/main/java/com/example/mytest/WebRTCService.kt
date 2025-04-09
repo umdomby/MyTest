@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import org.webrtc.*
+import okhttp3.WebSocketListener
 
 class WebRTCService : Service() {
     private val binder = LocalBinder()
@@ -118,7 +119,7 @@ class WebRTCService : Service() {
 
     private fun cleanupWebRTCResources() {
         try {
-            webRTCClient?.close()
+            webRTCClient.close()
 
             localView?.let {
                 it.clearImage()
@@ -132,30 +133,37 @@ class WebRTCService : Service() {
                 remoteView = null
             }
 
-            eglBase?.release()
+            eglBase.release()
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error cleaning up WebRTC resources", e)
         }
     }
 
     private fun connectWebSocket() {
-        webSocketClient = WebSocketClient(object : WebSocketListener {
-            override fun onMessage(message: JSONObject) = handleWebSocketMessage(message)
+        webSocketClient = WebSocketClient(object : okhttp3.WebSocketListener() {
+            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                try {
+                    val message = JSONObject(text)
+                    handleWebSocketMessage(message)
+                } catch (e: Exception) {
+                    Log.e("WebRTCService", "Error parsing WebSocket message", e)
+                }
+            }
 
-            override fun onConnected() {
+            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
                 Log.d("WebRTCService", "WebSocket connected")
                 updateNotification("Connected to server")
                 joinRoom()
             }
 
-            override fun onDisconnected() {
+            override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
                 Log.d("WebRTCService", "WebSocket disconnected")
                 updateNotification("Disconnected from server")
             }
 
-            override fun onError(error: String) {
-                Log.e("WebRTCService", "WebSocket error: $error")
-                updateNotification("Error: ${error.take(30)}...")
+            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                Log.e("WebRTCService", "WebSocket error: ${t.message}")
+                updateNotification("Error: ${t.message?.take(30)}...")
             }
         })
 
@@ -207,6 +215,10 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
+            // Модифицируем SDP для лучшей совместимости с браузерами
+            val modifiedSdp = modifySdpForBrowserCompatibility(sessionDescription.description)
+            val modifiedDesc = SessionDescription(sessionDescription.type, modifiedSdp)
+
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     createAnswer()
@@ -216,10 +228,36 @@ class WebRTCService : Service() {
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
-            }, sessionDescription)
+            }, modifiedDesc)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling offer", e)
         }
+    }
+
+    private fun modifySdpForBrowserCompatibility(sdp: String): String {
+        // 1. Удаляем несовместимые атрибуты
+        var modifiedSdp = sdp
+            .replace("a=extmap-allow-mixed\r\n", "")
+            .replace("a=msid-semantic:.+?\r\n".toRegex(), "")
+
+        // 2. Устанавливаем приоритет кодеков (VP8, H264)
+        modifiedSdp = modifiedSdp.replace(
+            "a=rtpmap:(\\d+) VP8/90000".toRegex(),
+            "a=rtpmap:\$1 VP8/90000\r\na=fmtp:\$1 x-google-start-bitrate=800"
+        )
+
+        // 3. Добавляем стандартные feedback механизмы
+        modifiedSdp = modifiedSdp.replace(
+            "a=rtpmap:(\\d+) (VP8|H264)/90000".toRegex(),
+            "a=rtpmap:\$1 \$2/90000\r\n" +
+                    "a=rtcp-fb:\$1 goog-remb\r\n" +
+                    "a=rtcp-fb:\$1 transport-cc\r\n" +
+                    "a=rtcp-fb:\$1 ccm fir\r\n" +
+                    "a=rtcp-fb:\$1 nack\r\n" +
+                    "a=rtcp-fb:\$1 nack pli"
+        )
+
+        return modifiedSdp
     }
 
     private fun createAnswer() {
@@ -230,8 +268,8 @@ class WebRTCService : Service() {
 
         webRTCClient.peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
-                // Модифицируем SDP для лучшей совместимости
-                val modifiedSdp = preferCodecs(desc.description)
+                // Модифицируем SDP для лучшей совместимости с браузерами
+                val modifiedSdp = modifySdpForBrowserCompatibility(desc.description)
                 val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
 
                 webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
@@ -253,14 +291,6 @@ class WebRTCService : Service() {
         }, constraints)
     }
 
-    private fun preferCodecs(sdp: String): String {
-        // Устанавливаем приоритет кодеков: VP8 > H264 > VP9
-        return sdp.replaceFirst(
-            "a=rtpmap:(\\d+) VP8/90000".toRegex(),
-            "a=rtpmap:\$1 VP8/90000\r\na=fmtp:\$1 x-google-start-bitrate=800\r\na=rtcp-fb:\$1 goog-remb\r\na=rtcp-fb:\$1 transport-cc\r\na=rtcp-fb:\$1 ccm fir\r\na=rtcp-fb:\$1 nack\r\na=rtcp-fb:\$1 nack pli"
-        )
-    }
-
     private fun sendSessionDescription(desc: SessionDescription) {
         try {
             val message = JSONObject().apply {
@@ -271,6 +301,7 @@ class WebRTCService : Service() {
                 })
                 put("room", roomName)
                 put("username", userName)
+                put("target", "browser") // Указываем, что ответ предназначен для браузера
             }
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
@@ -286,6 +317,10 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
+            // Модифицируем SDP для лучшей совместимости
+            val modifiedSdp = modifySdpForBrowserCompatibility(sessionDescription.description)
+            val modifiedDesc = SessionDescription(sessionDescription.type, modifiedSdp)
+
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     Log.d("WebRTCService", "Answer accepted")
@@ -295,7 +330,7 @@ class WebRTCService : Service() {
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
-            }, sessionDescription)
+            }, modifiedDesc)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling answer", e)
         }
