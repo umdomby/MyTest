@@ -6,10 +6,7 @@ import okhttp3.*
 import org.json.JSONObject
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocketFactory
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
+import javax.net.ssl.*
 
 class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
     private var webSocket: WebSocket? = null
