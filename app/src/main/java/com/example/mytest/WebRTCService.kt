@@ -19,6 +19,9 @@ class WebRTCService : Service() {
 
     private lateinit var remoteView: SurfaceViewRenderer
 
+    private val reconnectHandler = Handler(Looper.getMainLooper())
+    private var isDestroyed = false
+
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://anybet.site/ws"
@@ -41,6 +44,10 @@ class WebRTCService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("WebRTCService", "Service created")
+        isDestroyed = false
+        startForegroundService()
+        initializeAndConnect()
+
         try {
             createNotificationChannel()
             startForegroundService()
@@ -49,6 +56,18 @@ class WebRTCService : Service() {
 
             // Запускаем keep-alive
             handler.post(KeepAliveTask())
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Initialization failed", e)
+            scheduleReconnect()
+        }
+    }
+
+    private fun initializeAndConnect() {
+        try {
+            cleanupWebRTCResources()
+            initializeWebRTC()
+            connectWebSocket()
+            reconnectHandler.post(KeepAliveTask())
         } catch (e: Exception) {
             Log.e("WebRTCService", "Initialization failed", e)
             scheduleReconnect()
@@ -198,43 +217,45 @@ class WebRTCService : Service() {
     }
 
     private fun scheduleReconnect() {
-        handler.removeCallbacksAndMessages(null)
-        handler.postDelayed({
+        if (isDestroyed) return
+
+        reconnectHandler.removeCallbacksAndMessages(null)
+        reconnectHandler.postDelayed({
             if (reconnectAttempts < maxReconnectAttempts) {
                 reconnectAttempts++
+                Log.d("WebRTCService", "Attempting to reconnect ($reconnectAttempts/$maxReconnectAttempts)")
                 reconnect()
             } else {
-                updateNotification("Max reconnect attempts reached")
-                // Начинаем заново через некоторое время
-                handler.postDelayed({
-                    reconnectAttempts = 0
-                    reconnect()
-                }, 30000) // 30 секунд задержки
+                Log.d("WebRTCService", "Max reconnect attempts reached, will retry later")
+                reconnectAttempts = 0
+                // Увеличиваем задержку перед следующей попыткой
+                scheduleReconnectWithDelay(30000) // 30 секунд
             }
         }, reconnectDelay)
     }
 
+    private fun scheduleReconnectWithDelay(delay: Long) {
+        reconnectHandler.postDelayed({
+            reconnect()
+        }, delay)
+    }
+
     fun reconnect() {
+        if (isDestroyed) return
+
         handler.post {
             try {
-                updateNotification("Reconnecting... (attempt ${reconnectAttempts + 1}/$maxReconnectAttempts)")
+                updateNotification("Reconnecting...")
 
                 // 1. Закрываем существующие соединения
                 if (::webSocketClient.isInitialized) {
                     webSocketClient.disconnect()
                 }
 
-                // 2. Очищаем WebRTC ресурсы
-                cleanupWebRTCResources()
-
-                // 3. Переинициализируем WebRTC
-                initializeWebRTC()
-
-                // 4. Подключаемся заново
-                connectWebSocket()
+                // 2. Переинициализируем все
+                initializeAndConnect()
             } catch (e: Exception) {
                 Log.e("WebRTCService", "Reconnection error", e)
-                updateNotification("Reconnect failed")
                 scheduleReconnect()
             }
         }
@@ -242,9 +263,10 @@ class WebRTCService : Service() {
 
     private inner class KeepAliveTask : Runnable {
         override fun run() {
+            if (isDestroyed) return
+
             try {
                 if (::webSocketClient.isInitialized) {
-                    // Отправляем ping или просто проверяем соединение
                     val message = JSONObject().apply {
                         put("action", "ping")
                         put("room", roomName)
@@ -255,8 +277,9 @@ class WebRTCService : Service() {
             } catch (e: Exception) {
                 Log.e("WebRTCService", "KeepAlive error", e)
             } finally {
-                // Запускаем снова через 30 секунд
-                handler.postDelayed(this, 30000)
+                if (!isDestroyed) {
+                    reconnectHandler.postDelayed(this, 30000)
+                }
             }
         }
     }
@@ -457,6 +480,8 @@ class WebRTCService : Service() {
 
     override fun onDestroy() {
         Log.d("WebRTCService", "Service destroyed")
+        isDestroyed = true
+        reconnectHandler.removeCallbacksAndMessages(null)
         cleanupAllResources()
         super.onDestroy()
     }
