@@ -21,7 +21,7 @@ class WebRTCService : Service() {
 
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
-    private val webSocketUrl = "wss://anybet.site/ws"
+    private val webSocketUrl = "wss://ardua.site/ws"
 
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
