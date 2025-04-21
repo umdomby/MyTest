@@ -20,27 +20,25 @@ class WebRTCService : Service() {
     private lateinit var webRTCClient: WebRTCClient
     private lateinit var eglBase: EglBase
 
-    // Конфигурация
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://ardua.site/ws"
     private val isLeader = true
 
-    // Управление уведомлениями
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
 
-    // Обработчики
     private val handler = Handler(Looper.getMainLooper())
     private val reconnectHandler = Handler(Looper.getMainLooper())
+    private val pingHandler = Handler(Looper.getMainLooper())
 
-    // Переподключение
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 10
     private val baseReconnectDelay = 5000L
     private val maxReconnectDelay = 30000L
+    private var lastPongTime = 0L
+    private var isOfferCreated = false
 
-    // Мониторинг сети
     private val networkReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (isNetworkAvailable() && !isConnected()) {
@@ -60,13 +58,48 @@ class WebRTCService : Service() {
         Log.d(TAG, "Service created")
         registerReceiver(networkReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
         createNotificationChannel()
-        startForegroundService()
+        startForeground(notificationId, createNotification())
         initializeWebRTC()
-        connectWebSocketWithRetry()
+        connectWebSocket()
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork: NetworkInfo? = connectivityManager.activeNetworkInfo
+        return activeNetwork?.isConnectedOrConnecting == true
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "WebRTC Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "WebRTC streaming service"
+            }
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(channel)
+        }
+    }
+
+    private fun createNotification(text: String = "Active in room: $roomName"): Notification {
+        return NotificationCompat.Builder(this, channelId)
+            .setContentTitle("WebRTC Service")
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun updateNotification(text: String) {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(notificationId, createNotification(text))
     }
 
     private fun initializeWebRTC() {
-        Log.d("WebRTCService", "Initializing WebRTC")
+        Log.d(TAG, "Initializing WebRTC")
         cleanupWebRTCResources()
 
         eglBase = EglBase.create()
@@ -76,12 +109,24 @@ class WebRTCService : Service() {
             observer = createPeerConnectionObserver()
         )
 
-        // Установка обработчика ICE кандидатов
         webRTCClient.setIceCandidateListener(object : WebRTCClient.IceCandidateListener {
             override fun onIceCandidate(candidate: IceCandidate) {
                 sendIceCandidate(candidate)
             }
         })
+    }
+
+    private fun cleanupWebRTCResources() {
+        try {
+            if (::webRTCClient.isInitialized) {
+                webRTCClient.close()
+            }
+            if (::eglBase.isInitialized) {
+                eglBase.release()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning WebRTC resources", e)
+        }
     }
 
     private fun createPeerConnectionObserver() = object : PeerConnection.Observer {
@@ -108,7 +153,6 @@ class WebRTCService : Service() {
             }
         }
 
-        // Остальные методы Observer оставляем пустыми
         override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
@@ -121,7 +165,7 @@ class WebRTCService : Service() {
         override fun onTrack(transceiver: RtpTransceiver?) {}
     }
 
-    private fun connectWebSocketWithRetry() {
+    private fun connectWebSocket() {
         if (reconnectAttempts >= maxReconnectAttempts) {
             Log.e(TAG, "Max reconnect attempts reached")
             stopSelf()
@@ -137,10 +181,10 @@ class WebRTCService : Service() {
                 if (::webSocketClient.isInitialized) {
                     webSocketClient.disconnect()
                 }
-                connectWebSocket()
+                createWebSocketConnection()
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to WebSocket", e)
-                connectWebSocketWithRetry()
+                connectWebSocket()
             }
         }, delay)
     }
@@ -149,19 +193,36 @@ class WebRTCService : Service() {
         return minOf(baseReconnectDelay * (1 shl (reconnectAttempts - 1)), maxReconnectDelay)
     }
 
-    private fun connectWebSocket() {
+    private fun createWebSocketConnection() {
         webSocketClient = WebSocketClient(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "WebSocket connected")
                 updateNotification("Connected to server")
                 reconnectAttempts = 0
+                isOfferCreated = false
                 joinRoom()
+                startPingPong()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
+                    if (text == "pong") {
+                        lastPongTime = System.currentTimeMillis()
+                        return
+                    }
+
                     val message = JSONObject(text)
-                    handleWebSocketMessage(message)
+                    when (message.optString("type")) {
+                        "room_info" -> handleRoomInfo(message)
+                        "error" -> {
+                            val error = message.optString("data")
+                            if (error.contains("already has leader")) {
+                                // Если комната уже существует с другим ведущим, переподключаемся
+                                handler.postDelayed({ reconnect() }, 1000)
+                            }
+                        }
+                        else -> handleWebSocketMessage(message)
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "WebSocket message parse error", e)
                 }
@@ -170,17 +231,44 @@ class WebRTCService : Service() {
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket disconnected: $reason")
                 updateNotification("Disconnected from server")
-                connectWebSocketWithRetry()
+                stopPingPong()
+                // Переподключаемся только если это не было намеренное отключение
+                if (code != 1000) {
+                    connectWebSocket()
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket error: ${t.message}")
                 updateNotification("Connection error")
-                connectWebSocketWithRetry()
+                stopPingPong()
+                connectWebSocket()
             }
         })
 
         webSocketClient.connect(webSocketUrl)
+    }
+
+    private fun startPingPong() {
+        lastPongTime = System.currentTimeMillis()
+        pingHandler.postDelayed(object : Runnable {
+            override fun run() {
+                if (System.currentTimeMillis() - lastPongTime > 30000) {
+                    Log.w(TAG, "Ping timeout, reconnecting...")
+                    reconnect()
+                    return
+                }
+
+                if (isConnected()) {
+                    webSocketClient.send("ping")
+                }
+                pingHandler.postDelayed(this, 15000)
+            }
+        }, 15000)
+    }
+
+    private fun stopPingPong() {
+        pingHandler.removeCallbacksAndMessages(null)
     }
 
     private fun joinRoom() {
@@ -190,22 +278,30 @@ class WebRTCService : Service() {
                 put("room", roomName)
                 put("username", userName)
                 put("isLeader", isLeader)
-                put("reconnecting", reconnectAttempts > 1)
             }
             webSocketClient.send(message.toString())
 
-            if (isLeader) {
+            if (isLeader && !isOfferCreated) {
                 handler.postDelayed({
                     if (isConnected()) {
                         createAndSendOffer()
-                    } else {
-                        Log.w(TAG, "Not connected, skipping offer creation")
                     }
                 }, 1000)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error joining room", e)
         }
+    }
+
+    private fun isConnected(): Boolean {
+        return ::webSocketClient.isInitialized && webSocketClient.isConnected()
+    }
+
+    private fun canCreateOffer(): Boolean {
+        return ::webRTCClient.isInitialized &&
+                ::webSocketClient.isInitialized &&
+                webSocketClient.isConnected() &&
+                isLeader
     }
 
     private fun handleWebSocketMessage(message: JSONObject) {
@@ -217,6 +313,7 @@ class WebRTCService : Service() {
                 "answer" -> handleAnswer(message)
                 "ice_candidate" -> handleIceCandidate(message)
                 "room_info" -> handleRoomInfo(message)
+                "error" -> handleError(message)
                 else -> Log.w(TAG, "Unknown message type")
             }
         } catch (e: Exception) {
@@ -322,22 +419,44 @@ class WebRTCService : Service() {
         try {
             val data = message.getJSONObject("data")
             val hasSlave = data.optBoolean("hasSlave", false)
+            val users = data.optJSONArray("users")?.let {
+                (0 until it.length()).map { i -> it.getString(i) }
+            } ?: emptyList()
 
-            if (isLeader && !hasSlave) {
-                handler.postDelayed({
-                    if (isConnected()) {
-                        createAndSendOffer()
-                    }
-                }, 1000)
+            Log.d(TAG, "Room info: hasSlave=$hasSlave, users=$users")
+
+            if (isLeader) {
+                if (users.size > 2) {
+                    // Если в комнате больше 2 пользователей - переподключаемся
+                    Log.w(TAG, "Room has too many users, reconnecting...")
+                    reconnect()
+                } else if (!hasSlave && !isOfferCreated) {
+                    // Если нет ведомого и оффер еще не создан - создаем оффер
+                    handler.postDelayed({
+                        if (isConnected()) {
+                            createAndSendOffer()
+                        }
+                    }, 1000)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error handling room info", e)
         }
     }
 
+    private fun handleError(message: JSONObject) {
+        val error = message.optString("data", "Unknown error")
+        Log.e(TAG, "Server error: $error")
+
+        if (error.contains("already has leader")) {
+            reconnect()
+        }
+    }
+
     private fun createAndSendOffer() {
         if (!canCreateOffer()) {
             Log.w(TAG, "Cannot create offer - not ready")
+            handler.postDelayed({ createAndSendOffer() }, 1000)
             return
         }
 
@@ -350,6 +469,7 @@ class WebRTCService : Service() {
             webRTCClient.peerConnection.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     Log.d(TAG, "Offer created successfully")
+                    isOfferCreated = true
                     webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
                             Log.d(TAG, "Local description set successfully")
@@ -357,6 +477,7 @@ class WebRTCService : Service() {
                         }
                         override fun onSetFailure(error: String) {
                             Log.e(TAG, "Error setting local description: $error")
+                            isOfferCreated = false
                             handler.postDelayed({ createAndSendOffer() }, 1000)
                         }
                         override fun onCreateSuccess(desc: SessionDescription?) {}
@@ -365,6 +486,7 @@ class WebRTCService : Service() {
                 }
                 override fun onCreateFailure(error: String) {
                     Log.e(TAG, "Error creating offer: $error")
+                    isOfferCreated = false
                     handler.postDelayed({ createAndSendOffer() }, 1000)
                 }
                 override fun onSetSuccess() {}
@@ -372,15 +494,9 @@ class WebRTCService : Service() {
             }, constraints)
         } catch (e: Exception) {
             Log.e(TAG, "Error in createAndSendOffer", e)
+            isOfferCreated = false
             handler.postDelayed({ createAndSendOffer() }, 1000)
         }
-    }
-
-    private fun canCreateOffer(): Boolean {
-        return ::webRTCClient.isInitialized &&
-                ::webSocketClient.isInitialized &&
-                webSocketClient.isConnected() &&
-                isLeader
     }
 
     private fun sendSessionDescription(desc: SessionDescription) {
@@ -418,21 +534,14 @@ class WebRTCService : Service() {
         }
     }
 
-    fun reconnect() {
+    private fun reconnect() {
         handler.post {
             try {
                 updateNotification("Reconnecting...")
+                isOfferCreated = false
                 cleanupAllResources()
                 initializeWebRTC()
                 connectWebSocket()
-
-                if (isLeader) {
-                    handler.postDelayed({
-                        if (isConnected()) {
-                            createAndSendOffer()
-                        }
-                    }, 2000)
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Reconnection error", e)
                 handler.postDelayed({
@@ -444,115 +553,18 @@ class WebRTCService : Service() {
 
     private fun cleanupAllResources() {
         handler.removeCallbacksAndMessages(null)
+        stopPingPong()
         cleanupWebRTCResources()
         if (::webSocketClient.isInitialized) {
             webSocketClient.disconnect()
         }
     }
 
-    private fun cleanupWebRTCResources() {
-        try {
-            if (::webRTCClient.isInitialized) {
-                webRTCClient.close()
-            }
-            if (::eglBase.isInitialized) {
-                eglBase.release()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error cleaning WebRTC resources", e)
-        }
-    }
-
-    private fun isNetworkAvailable(): Boolean {
-        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val activeNetwork: NetworkInfo? = connectivityManager.activeNetworkInfo
-        return activeNetwork?.isConnectedOrConnecting == true
-    }
-
-    fun isConnected(): Boolean {
-        return ::webSocketClient.isInitialized && webSocketClient.isConnected()
-    }
-
-    fun isInitialized(): Boolean {
-        return ::webSocketClient.isInitialized &&
-                ::webRTCClient.isInitialized &&
-                ::eglBase.isInitialized
-    }
-
-    // Управление уведомлениями
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "WebRTC Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "WebRTC streaming service"
-            }
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(channel)
-        }
-    }
-
-    private fun startForegroundService() {
-        val notification = createNotification()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                startForeground(
-                    notificationId,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
-            } catch (e: SecurityException) {
-                Log.e(TAG, "SecurityException: ${e.message}")
-                startForeground(notificationId, notification)
-            }
-        } else {
-            startForeground(notificationId, notification)
-        }
-    }
-
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("WebRTC Service")
-            .setContentText("Active in room: $roomName")
-            .setSmallIcon(R.drawable.ic_notification)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun updateNotification(text: String) {
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("WebRTC Service")
-            .setContentText(text)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .build()
-
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .notify(notificationId, notification)
-    }
-
     override fun onDestroy() {
         Log.d(TAG, "Service destroyed")
         unregisterReceiver(networkReceiver)
         cleanupAllResources()
-        reconnectHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        intent?.action?.let {
-            if (it == "RECONNECT") {
-                reconnect()
-            }
-        }
-        return START_STICKY
     }
 
     companion object {

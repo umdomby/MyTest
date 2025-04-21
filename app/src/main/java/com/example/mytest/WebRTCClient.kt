@@ -36,8 +36,8 @@ class WebRTCClient(
 
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            true,  // enableIntelVp8Encoder
-            true   // enableH264HighProfile
+            true,
+            true
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)

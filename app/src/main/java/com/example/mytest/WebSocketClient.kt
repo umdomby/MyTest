@@ -24,7 +24,11 @@ class WebSocketClient(private val listener: WebSocketListener) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                listener.onMessage(webSocket, text)
+                if (text == "ping") {
+                    webSocket.send("pong")
+                } else {
+                    listener.onMessage(webSocket, text)
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -60,9 +64,9 @@ class WebSocketClient(private val listener: WebSocketListener) {
     @SuppressLint("CustomX509TrustManager")
     private fun createUnsafeOkHttpClient(): OkHttpClient {
         return OkHttpClient.Builder()
-            .pingInterval(20, TimeUnit.SECONDS) // Ping каждые 20 секунд для поддержания соединения
+            .pingInterval(20, TimeUnit.SECONDS)
             .sslSocketFactory(getUnsafeSSLSocketFactory(), getTrustAllCerts()[0] as X509TrustManager)
-            .hostnameVerifier { _, _ -> true } // Пропускаем проверку SSL
+            .hostnameVerifier { _, _ -> true }
             .build()
     }
 
