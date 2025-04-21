@@ -18,6 +18,9 @@ class WebRTCClient(
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
+    internal val remoteViewRenderer: SurfaceViewRenderer
+        get() = remoteView
+
     init {
         initializePeerConnectionFactory()
         peerConnection = createPeerConnection()
