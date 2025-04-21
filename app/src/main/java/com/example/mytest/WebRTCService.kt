@@ -37,7 +37,13 @@ class WebRTCService : Service() {
     private val baseReconnectDelay = 5000L
     private val maxReconnectDelay = 30000L
     private var lastPongTime = 0L
+
+    // Состояние подключения
     private var isOfferCreated = false
+    private var isInRoom = false
+    private var hasSlave = false
+    private var isConnectionEstablished = false
+    private var shouldReconnect = false
 
     private val networkReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -140,14 +146,21 @@ class WebRTCService : Service() {
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
             Log.d(TAG, "ICE connection state: $state")
             when (state) {
-                PeerConnection.IceConnectionState.DISCONNECTED,
-                PeerConnection.IceConnectionState.FAILED -> {
+                PeerConnection.IceConnectionState.DISCONNECTED -> {
                     updateNotification("Connection lost, reconnecting...")
-                    reconnect()
+                    handler.postDelayed({ checkAndReconnect() }, 2000)
+                }
+                PeerConnection.IceConnectionState.FAILED -> {
+                    updateNotification("Connection failed, reconnecting...")
+                    handler.postDelayed({ checkAndReconnect() }, 2000)
                 }
                 PeerConnection.IceConnectionState.CONNECTED -> {
                     updateNotification("Connection established")
                     reconnectAttempts = 0
+                    isConnectionEstablished = true
+                }
+                PeerConnection.IceConnectionState.COMPLETED -> {
+                    isConnectionEstablished = true
                 }
                 else -> {}
             }
@@ -163,6 +176,13 @@ class WebRTCService : Service() {
         override fun onRenegotiationNeeded() {}
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
         override fun onTrack(transceiver: RtpTransceiver?) {}
+    }
+
+    private fun checkAndReconnect() {
+        if (!isConnectionEstablished && !shouldReconnect) {
+            shouldReconnect = true
+            reconnect()
+        }
     }
 
     private fun connectWebSocket() {
@@ -199,7 +219,11 @@ class WebRTCService : Service() {
                 Log.d(TAG, "WebSocket connected")
                 updateNotification("Connected to server")
                 reconnectAttempts = 0
+                isInRoom = false
+                hasSlave = false
                 isOfferCreated = false
+                isConnectionEstablished = false
+                shouldReconnect = false
                 joinRoom()
                 startPingPong()
             }
@@ -216,8 +240,8 @@ class WebRTCService : Service() {
                         "room_info" -> handleRoomInfo(message)
                         "error" -> {
                             val error = message.optString("data")
-                            if (error.contains("already has leader")) {
-                                // Если комната уже существует с другим ведущим, переподключаемся
+                            Log.e(TAG, "WebSocket error: $error")
+                            if (error.contains("already has leader") || error.contains("Room is full")) {
                                 handler.postDelayed({ reconnect() }, 1000)
                             }
                         }
@@ -232,7 +256,6 @@ class WebRTCService : Service() {
                 Log.d(TAG, "WebSocket disconnected: $reason")
                 updateNotification("Disconnected from server")
                 stopPingPong()
-                // Переподключаемся только если это не было намеренное отключение
                 if (code != 1000) {
                     connectWebSocket()
                 }
@@ -280,14 +303,6 @@ class WebRTCService : Service() {
                 put("isLeader", isLeader)
             }
             webSocketClient.send(message.toString())
-
-            if (isLeader && !isOfferCreated) {
-                handler.postDelayed({
-                    if (isConnected()) {
-                        createAndSendOffer()
-                    }
-                }, 1000)
-            }
         } catch (e: Exception) {
             Log.e(TAG, "Error joining room", e)
         }
@@ -301,7 +316,10 @@ class WebRTCService : Service() {
         return ::webRTCClient.isInitialized &&
                 ::webSocketClient.isInitialized &&
                 webSocketClient.isConnected() &&
-                isLeader
+                isLeader &&
+                isInRoom &&
+                !hasSlave &&
+                !isOfferCreated
     }
 
     private fun handleWebSocketMessage(message: JSONObject) {
@@ -322,6 +340,7 @@ class WebRTCService : Service() {
     }
 
     private fun handleOffer(offer: JSONObject) {
+        // Ведущий не должен обрабатывать офферы
         if (!isLeader) {
             try {
                 val sdp = offer.getJSONObject("sdp")
@@ -388,6 +407,8 @@ class WebRTCService : Service() {
                 webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                     override fun onSetSuccess() {
                         Log.d(TAG, "Answer accepted")
+                        hasSlave = true
+                        isConnectionEstablished = true
                     }
                     override fun onSetFailure(error: String) {
                         Log.e(TAG, "Error setting answer: $error")
@@ -418,14 +439,15 @@ class WebRTCService : Service() {
     private fun handleRoomInfo(message: JSONObject) {
         try {
             val data = message.getJSONObject("data")
-            val hasSlave = data.optBoolean("hasSlave", false)
+            hasSlave = data.optBoolean("hasSlave", false)
             val users = data.optJSONArray("users")?.let {
                 (0 until it.length()).map { i -> it.getString(i) }
             } ?: emptyList()
 
-            Log.d(TAG, "Room info: hasSlave=$hasSlave, users=$users")
+            isInRoom = users.contains(userName)
+            Log.d(TAG, "Room info: hasSlave=$hasSlave, users=$users, isInRoom=$isInRoom")
 
-            if (isLeader) {
+            if (isLeader && isInRoom) {
                 if (users.size > 2) {
                     // Если в комнате больше 2 пользователей - переподключаемся
                     Log.w(TAG, "Room has too many users, reconnecting...")
@@ -433,7 +455,7 @@ class WebRTCService : Service() {
                 } else if (!hasSlave && !isOfferCreated) {
                     // Если нет ведомого и оффер еще не создан - создаем оффер
                     handler.postDelayed({
-                        if (isConnected()) {
+                        if (canCreateOffer()) {
                             createAndSendOffer()
                         }
                     }, 1000)
@@ -448,7 +470,9 @@ class WebRTCService : Service() {
         val error = message.optString("data", "Unknown error")
         Log.e(TAG, "Server error: $error")
 
-        if (error.contains("already has leader")) {
+        if (error.contains("already has leader") ||
+            error.contains("Room is full") ||
+            error.contains("Room already has")) {
             reconnect()
         }
     }
@@ -456,7 +480,6 @@ class WebRTCService : Service() {
     private fun createAndSendOffer() {
         if (!canCreateOffer()) {
             Log.w(TAG, "Cannot create offer - not ready")
-            handler.postDelayed({ createAndSendOffer() }, 1000)
             return
         }
 
@@ -466,6 +489,7 @@ class WebRTCService : Service() {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
             }
 
+            Log.d(TAG, "Creating offer...")
             webRTCClient.peerConnection.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     Log.d(TAG, "Offer created successfully")
@@ -478,7 +502,6 @@ class WebRTCService : Service() {
                         override fun onSetFailure(error: String) {
                             Log.e(TAG, "Error setting local description: $error")
                             isOfferCreated = false
-                            handler.postDelayed({ createAndSendOffer() }, 1000)
                         }
                         override fun onCreateSuccess(desc: SessionDescription?) {}
                         override fun onCreateFailure(error: String) {}
@@ -487,7 +510,6 @@ class WebRTCService : Service() {
                 override fun onCreateFailure(error: String) {
                     Log.e(TAG, "Error creating offer: $error")
                     isOfferCreated = false
-                    handler.postDelayed({ createAndSendOffer() }, 1000)
                 }
                 override fun onSetSuccess() {}
                 override fun onSetFailure(error: String) {}
@@ -495,7 +517,6 @@ class WebRTCService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error in createAndSendOffer", e)
             isOfferCreated = false
-            handler.postDelayed({ createAndSendOffer() }, 1000)
         }
     }
 
@@ -535,18 +556,23 @@ class WebRTCService : Service() {
     }
 
     private fun reconnect() {
-        handler.post {
-            try {
-                updateNotification("Reconnecting...")
-                isOfferCreated = false
-                cleanupAllResources()
-                initializeWebRTC()
-                connectWebSocket()
-            } catch (e: Exception) {
-                Log.e(TAG, "Reconnection error", e)
-                handler.postDelayed({
-                    reconnect()
-                }, 5000)
+        if (shouldReconnect) {
+            handler.post {
+                try {
+                    updateNotification("Reconnecting...")
+                    isOfferCreated = false
+                    isInRoom = false
+                    hasSlave = false
+                    isConnectionEstablished = false
+                    cleanupAllResources()
+                    initializeWebRTC()
+                    connectWebSocket()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Reconnection error", e)
+                    handler.postDelayed({
+                        reconnect()
+                    }, 5000)
+                }
             }
         }
     }
