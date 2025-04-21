@@ -59,7 +59,7 @@ class WebRTCClient(
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceTransportsType = PeerConnection.IceTransportsType.ALL
-            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            bundlePolicy = PeerConnection.BundlePolicy.BALANCED
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
