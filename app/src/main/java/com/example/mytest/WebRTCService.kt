@@ -219,6 +219,7 @@ class WebRTCService : Service() {
                 put("action", "join")
                 put("room", roomName)
                 put("username", userName)
+                put("isLeader", true) // Android всегда ведущий
             }
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
