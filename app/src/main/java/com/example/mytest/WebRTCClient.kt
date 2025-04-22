@@ -7,6 +7,8 @@ import org.webrtc.*
 class WebRTCClient(
     private val context: Context,
     private val eglBase: EglBase,
+    private val localView: SurfaceViewRenderer,
+    private val remoteView: SurfaceViewRenderer,
     private val observer: PeerConnection.Observer
 ) {
     lateinit var peerConnectionFactory: PeerConnectionFactory
@@ -16,12 +18,8 @@ class WebRTCClient(
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
-    // Интерфейс для обработки ICE кандидатов
-    interface IceCandidateListener {
-        fun onIceCandidate(candidate: IceCandidate)
-    }
-
-    private var iceCandidateListener: IceCandidateListener? = null
+    internal val remoteViewRenderer: SurfaceViewRenderer
+        get() = remoteView
 
     init {
         initializePeerConnectionFactory()
@@ -61,33 +59,15 @@ class WebRTCClient(
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceTransportsType = PeerConnection.IceTransportsType.ALL
-            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            // Изменяем bundlePolicy на balanced вместо max-bundle
+            bundlePolicy = PeerConnection.BundlePolicy.BALANCED
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
             keyType = PeerConnection.KeyType.ECDSA
-            iceCandidatePoolSize = 5
         }
 
-        return peerConnectionFactory.createPeerConnection(rtcConfig, object : PeerConnection.Observer {
-            override fun onIceCandidate(candidate: IceCandidate?) {
-                candidate?.let {
-                    iceCandidateListener?.onIceCandidate(it)
-                }
-            }
-
-            override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState?) {}
-            override fun onSignalingChange(newState: PeerConnection.SignalingState?) {}
-            override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-            override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState?) {}
-            override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
-            override fun onAddStream(stream: MediaStream?) {}
-            override fun onRemoveStream(stream: MediaStream?) {}
-            override fun onDataChannel(dataChannel: DataChannel?) {}
-            override fun onRenegotiationNeeded() {}
-            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
-            override fun onTrack(transceiver: RtpTransceiver?) {}
-        }) ?: throw IllegalStateException("Failed to create PeerConnection")
+        return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
     }
 
     private fun createLocalTracks() {
@@ -137,7 +117,9 @@ class WebRTCClient(
                 )
                 capturer.startCapture(640, 480, 30)
 
-                localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource)
+                localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
+                    addSink(localView)
+                }
             } ?: run {
                 Log.e("WebRTCClient", "Failed to create video capturer")
             }
@@ -158,23 +140,20 @@ class WebRTCClient(
         }
     }
 
-    fun setIceCandidateListener(listener: IceCandidateListener) {
-        this.iceCandidateListener = listener
-    }
-
     fun close() {
         try {
             videoCapturer?.let {
                 it.stopCapture()
                 it.dispose()
             }
-            localVideoTrack?.dispose()
+            localVideoTrack?.let {
+                it.removeSink(localView)
+                it.dispose()
+            }
             localAudioTrack?.dispose()
             surfaceTextureHelper?.dispose()
             peerConnection.close()
             peerConnection.dispose()
-            PeerConnectionFactory.stopInternalTracingCapture()
-            PeerConnectionFactory.shutdownInternalTracer()
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error closing resources", e)
         }
