@@ -18,9 +18,6 @@ class WebRTCClient(
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
-    internal val remoteViewRenderer: SurfaceViewRenderer
-        get() = remoteView
-
     init {
         initializePeerConnectionFactory()
         peerConnection = createPeerConnection()
@@ -50,17 +47,21 @@ class WebRTCClient(
 
     private fun createPeerConnection(): PeerConnection {
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19301").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19303").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19304").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19305").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19301").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun3.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun4.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19303").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19304").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19305").createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceTransportsType = PeerConnection.IceTransportsType.ALL
-            // Изменяем bundlePolicy на balanced вместо max-bundle
-            bundlePolicy = PeerConnection.BundlePolicy.BALANCED
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL

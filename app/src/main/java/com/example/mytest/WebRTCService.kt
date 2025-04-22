@@ -1,4 +1,3 @@
-// file: src/main/java/com/example/mytest/WebRTCService.kt
 package com.example.mytest
 
 import android.app.*
@@ -11,26 +10,22 @@ import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import org.webrtc.*
 import okhttp3.WebSocketListener
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 class WebRTCService : Service() {
     private val binder = LocalBinder()
     private lateinit var webSocketClient: WebSocketClient
     private lateinit var webRTCClient: WebRTCClient
     private lateinit var eglBase: EglBase
-    private val handler = Handler(Looper.getMainLooper())
-    private val executor = Executors.newSingleThreadScheduledExecutor()
+
+    private lateinit var remoteView: SurfaceViewRenderer
 
     private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://ardua.site/ws"
-    private var isLeader = true // Android всегда ведущий
 
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
-
-    private lateinit var remoteView: SurfaceViewRenderer
+    private val handler = Handler(Looper.getMainLooper())
 
     inner class LocalBinder : Binder() {
         fun getService(): WebRTCService = this@WebRTCService
@@ -41,34 +36,20 @@ class WebRTCService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("WebRTCService", "Service created")
-        createNotificationChannel()
-        startForegroundService()
-        initializeWebRTC()
-        startConnectionLoop()
-    }
-
-    private fun startConnectionLoop() {
-        executor.scheduleWithFixedDelay({
-            try {
-                if (!::webSocketClient.isInitialized || !webSocketClient.isConnected) {
-                    connectWebSocket()
-                } else if (!isInRoom()) {
-                    joinRoom()
-                }
-            } catch (e: Exception) {
-                Log.e("WebRTCService", "Connection error", e)
-                updateNotification("Ошибка подключения: ${e.message?.take(30)}...")
-                handler.postDelayed({ startConnectionLoop() }, 5000)
-            }
-        }, 0, 5, TimeUnit.SECONDS)
-    }
-
-    private fun isInRoom(): Boolean {
-        return ::webSocketClient.isInitialized && webSocketClient.isConnected
+        try {
+            createNotificationChannel()
+            startForegroundService()
+            initializeWebRTC()
+            connectWebSocket()
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Initialization failed", e)
+            stopSelf()
+        }
     }
 
     private fun startForegroundService() {
         val notification = createNotification()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
                 startForeground(
@@ -195,17 +176,41 @@ class WebRTCService : Service() {
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
                 Log.d("WebRTCService", "WebSocket disconnected")
                 updateNotification("Disconnected from server")
-                handler.postDelayed({ startConnectionLoop() }, 5000)
+                scheduleReconnect()
             }
 
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
                 Log.e("WebRTCService", "WebSocket error: ${t.message}")
                 updateNotification("Error: ${t.message?.take(30)}...")
-                handler.postDelayed({ startConnectionLoop() }, 5000)
+                scheduleReconnect()
             }
         })
 
         webSocketClient.connect(webSocketUrl)
+    }
+
+    private fun scheduleReconnect() {
+        handler.postDelayed({
+            reconnect()
+        }, 5000)
+    }
+
+    fun reconnect() {
+        handler.post {
+            try {
+                updateNotification("Reconnecting...")
+                if (::webSocketClient.isInitialized) {
+                    webSocketClient.disconnect()
+                }
+                cleanupWebRTCResources()
+                initializeWebRTC()
+                connectWebSocket()
+            } catch (e: Exception) {
+                Log.e("WebRTCService", "Reconnection error", e)
+                updateNotification("Reconnection failed")
+                scheduleReconnect()
+            }
+        }
     }
 
     private fun joinRoom() {
@@ -214,7 +219,6 @@ class WebRTCService : Service() {
                 put("action", "join")
                 put("room", roomName)
                 put("username", userName)
-                put("isLeader", isLeader)
             }
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
@@ -231,11 +235,6 @@ class WebRTCService : Service() {
                 "answer" -> handleAnswer(message)
                 "ice_candidate" -> handleIceCandidate(message)
                 "room_info" -> {}
-                "error" -> {
-                    val error = message.optString("data")
-                    Log.e("WebRTCService", "Server error: $error")
-                    updateNotification("Error: $error")
-                }
                 else -> Log.w("WebRTCService", "Unknown message type")
             }
         } catch (e: Exception) {
@@ -416,7 +415,6 @@ class WebRTCService : Service() {
 
     private fun cleanupAllResources() {
         handler.removeCallbacksAndMessages(null)
-        executor.shutdownNow()
         cleanupWebRTCResources()
         if (::webSocketClient.isInitialized) {
             webSocketClient.disconnect()
@@ -426,7 +424,7 @@ class WebRTCService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.action?.let {
             if (it == "RECONNECT") {
-                startConnectionLoop()
+                reconnect()
             }
         }
         return START_STICKY

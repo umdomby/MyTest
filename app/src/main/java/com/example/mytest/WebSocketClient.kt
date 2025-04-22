@@ -1,4 +1,3 @@
-// file: src/main/java/com/example/mytest/WebSocketClient.kt
 package com.example.mytest
 
 import android.annotation.SuppressLint
@@ -17,9 +16,6 @@ class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
         .hostnameVerifier { _, _ -> true }
         .sslSocketFactory(getUnsafeSSLSocketFactory(), getTrustAllCerts()[0] as X509TrustManager)
         .build()
-
-    val isConnected: Boolean
-        get() = webSocket != null
 
     private fun getUnsafeSSLSocketFactory(): SSLSocketFactory {
         val trustAllCerts = getTrustAllCerts()
