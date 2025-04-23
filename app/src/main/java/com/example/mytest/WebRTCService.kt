@@ -1,9 +1,12 @@
 package com.example.mytest
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -16,6 +19,10 @@ class WebRTCService : Service() {
     private lateinit var webSocketClient: WebSocketClient
     private lateinit var webRTCClient: WebRTCClient
     private lateinit var eglBase: EglBase
+
+    private var reconnectAttempts = 0
+    private val maxReconnectAttempts = 10
+    private val reconnectDelay = 5000L // 5 секунд
 
     private lateinit var remoteView: SurfaceViewRenderer
 
@@ -33,10 +40,35 @@ class WebRTCService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
+    private val connectivityReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (!isInitialized() || !webSocketClient.isConnected()) {
+                reconnect()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
+
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, WebRTCService::class.java).apply {
+            action = "CHECK_CONNECTION"
+        }
+        val pendingIntent = PendingIntent.getService(
+            this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Проверяем каждые 5 минут
+        alarmManager.setInexactRepeating(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + AlarmManager.INTERVAL_FIFTEEN_MINUTES,
+            AlarmManager.INTERVAL_FIFTEEN_MINUTES,
+            pendingIntent
+        )
         Log.d("WebRTCService", "Service created")
         try {
+            registerReceiver(connectivityReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
             createNotificationChannel()
             startForegroundService()
             initializeWebRTC()
@@ -190,15 +222,27 @@ class WebRTCService : Service() {
     }
 
     private fun scheduleReconnect() {
-        handler.postDelayed({
-            reconnect()
-        }, 5000)
+        handler.removeCallbacksAndMessages(null) // Удаляем предыдущие попытки
+
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++
+            val delay = reconnectDelay * reconnectAttempts // Увеличиваем задержку с каждой попыткой
+
+            handler.postDelayed({
+                Log.d("WebRTCService", "Attempting to reconnect ($reconnectAttempts/$maxReconnectAttempts)...")
+                updateNotification("Reconnecting ($reconnectAttempts/$maxReconnectAttempts)...")
+                reconnect()
+            }, delay)
+        } else {
+            // После максимального числа попыток - перезапускаем счетчик и пробуем снова
+            reconnectAttempts = 0
+            scheduleReconnect()
+        }
     }
 
     fun reconnect() {
         handler.post {
             try {
-                updateNotification("Reconnecting...")
                 if (::webSocketClient.isInitialized) {
                     webSocketClient.disconnect()
                 }
@@ -207,7 +251,6 @@ class WebRTCService : Service() {
                 connectWebSocket()
             } catch (e: Exception) {
                 Log.e("WebRTCService", "Reconnection error", e)
-                updateNotification("Reconnection failed")
                 scheduleReconnect()
             }
         }
@@ -411,6 +454,17 @@ class WebRTCService : Service() {
     override fun onDestroy() {
         Log.d("WebRTCService", "Service destroyed")
         cleanupAllResources()
+
+        // Перезапускаем сервис через некоторое время
+        handler.postDelayed({
+            val intent = Intent(applicationContext, WebRTCService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        }, 10000)
+        unregisterReceiver(connectivityReceiver)
         super.onDestroy()
     }
 
@@ -424,11 +478,14 @@ class WebRTCService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.action?.let {
-            if (it == "RECONNECT") {
-                reconnect()
+            when (it) {
+                "RECONNECT" -> reconnect()
+                "STOP" -> stopSelf()
             }
         }
-        return START_STICKY
+
+        // Перезапускаем сервис, если он будет убит системой
+        return START_REDELIVER_INTENT
     }
 
     fun isInitialized(): Boolean {

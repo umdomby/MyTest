@@ -39,6 +39,9 @@ class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
                 override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
             })
     }
+    fun isConnected(): Boolean {
+        return webSocket != null
+    }
 
     fun connect(url: String) {
         val request = Request.Builder()
