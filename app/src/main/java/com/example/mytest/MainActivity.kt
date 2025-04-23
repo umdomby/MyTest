@@ -4,7 +4,11 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -24,6 +28,7 @@ class MainActivity : ComponentActivity() {
         if (permissions.all { it.value }) {
             if (isCameraPermissionGranted()) {
                 requestMediaProjection()
+                checkBatteryOptimization()
             } else {
                 showToast("Требуется разрешение на использование камеры")
                 finish()
@@ -51,6 +56,7 @@ class MainActivity : ComponentActivity() {
 
         if (checkAllPermissionsGranted() && isCameraPermissionGranted()) {
             requestMediaProjection()
+            checkBatteryOptimization()
         } else {
             requestPermissionLauncher.launch(requiredPermissions)
         }
@@ -85,6 +91,18 @@ class MainActivity : ComponentActivity() {
             this,
             Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun checkBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(PowerManager::class.java)
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            }
+        }
     }
 
     private fun showToast(text: String) {

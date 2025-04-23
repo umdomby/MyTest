@@ -7,12 +7,17 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
+import android.net.Network
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import org.json.JSONObject
 import org.webrtc.*
 import okhttp3.WebSocketListener
+import java.util.concurrent.TimeUnit
+import android.net.NetworkRequest
 
 class WebRTCService : Service() {
     private val binder = LocalBinder()
@@ -34,6 +39,8 @@ class WebRTCService : Service() {
     private val channelId = "webrtc_service_channel"
     private val handler = Handler(Looper.getMainLooper())
 
+
+
     inner class LocalBinder : Binder() {
         fun getService(): WebRTCService = this@WebRTCService
     }
@@ -48,6 +55,27 @@ class WebRTCService : Service() {
         }
     }
 
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            super.onAvailable(network)
+            handler.post { reconnect() }
+        }
+
+        override fun onLost(network: Network) {
+            super.onLost(network)
+            handler.post { updateNotification("Network lost") }
+        }
+    }
+
+    private val healthCheckRunnable = object : Runnable {
+        override fun run() {
+            if (!isServiceActive()) {
+                reconnect()
+            }
+            handler.postDelayed(this, 30000) // Проверка каждые 30 секунд
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
 
@@ -58,6 +86,8 @@ class WebRTCService : Service() {
         val pendingIntent = PendingIntent.getService(
             this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+        handler.post(healthCheckRunnable) // Запускаем проверку активности
 
         // Проверяем каждые 5 минут
         alarmManager.setInexactRepeating(
@@ -78,6 +108,22 @@ class WebRTCService : Service() {
             stopSelf()
         }
     }
+
+    // В класс WebRTCService добавить:
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            cm.registerDefaultNetworkCallback(networkCallback)
+        } else {
+            val request = NetworkRequest.Builder().build()
+            cm.registerNetworkCallback(request, networkCallback)
+        }
+    }
+
+    private fun isServiceActive(): Boolean {
+        return ::webSocketClient.isInitialized && webSocketClient.isConnected()
+    }
+
 
     private fun startForegroundService() {
         val notification = createNotification()
@@ -222,22 +268,20 @@ class WebRTCService : Service() {
     }
 
     private fun scheduleReconnect() {
-        handler.removeCallbacksAndMessages(null) // Удаляем предыдущие попытки
+        handler.removeCallbacksAndMessages(null)
 
-        if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++
-            val delay = reconnectDelay * reconnectAttempts // Увеличиваем задержку с каждой попыткой
-
-            handler.postDelayed({
-                Log.d("WebRTCService", "Attempting to reconnect ($reconnectAttempts/$maxReconnectAttempts)...")
-                updateNotification("Reconnecting ($reconnectAttempts/$maxReconnectAttempts)...")
-                reconnect()
-            }, delay)
-        } else {
-            // После максимального числа попыток - перезапускаем счетчик и пробуем снова
-            reconnectAttempts = 0
-            scheduleReconnect()
+        reconnectAttempts++
+        val delay = when {
+            reconnectAttempts < 5 -> 5000L // 5 секунд для первых 5 попыток
+            reconnectAttempts < 10 -> 15000L // 15 секунд для следующих 5
+            else -> 60000L // 1 минута для остальных
         }
+
+        handler.postDelayed({
+            Log.d("WebRTCService", "Reconnect attempt $reconnectAttempts...")
+            updateNotification("Reconnecting (attempt $reconnectAttempts)...")
+            reconnect()
+        }, delay)
     }
 
     fun reconnect() {
@@ -433,7 +477,7 @@ class WebRTCService : Service() {
             .setContentTitle("WebRTC Service")
             .setContentText("Active in room: $roomName")
             .setSmallIcon(R.drawable.ic_notification)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_HIGH) // Измените на HIGH
             .setOngoing(true)
             .build()
     }
@@ -453,18 +497,15 @@ class WebRTCService : Service() {
 
     override fun onDestroy() {
         Log.d("WebRTCService", "Service destroyed")
+        handler.removeCallbacks(healthCheckRunnable)
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            cm.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error unregistering network callback", e)
+        }
         cleanupAllResources()
-
-        // Перезапускаем сервис через некоторое время
-        handler.postDelayed({
-            val intent = Intent(applicationContext, WebRTCService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        }, 10000)
-        unregisterReceiver(connectivityReceiver)
+        scheduleRestartWithWorkManager()
         super.onDestroy()
     }
 
@@ -486,6 +527,13 @@ class WebRTCService : Service() {
 
         // Перезапускаем сервис, если он будет убит системой
         return START_REDELIVER_INTENT
+    }
+
+    private fun scheduleRestartWithWorkManager() {
+        val workRequest = OneTimeWorkRequestBuilder<WebRTCWorker>()
+            .setInitialDelay(1, TimeUnit.MINUTES)
+            .build()
+        WorkManager.getInstance(applicationContext).enqueue(workRequest)
     }
 
     fun isInitialized(): Boolean {
