@@ -323,10 +323,37 @@ class WebRTCService : Service() {
                 "answer" -> handleAnswer(message)
                 "ice_candidate" -> handleIceCandidate(message)
                 "room_info" -> {}
+                "switch_camera" -> {
+                    // Обрабатываем команду переключения камеры
+                    val useBackCamera = message.optBoolean("useBackCamera", false)
+                    Log.d("WebRTCService", "Received switch camera command: useBackCamera=$useBackCamera")
+                    handler.post {
+                        webRTCClient.switchCamera(useBackCamera)
+                        // Отправляем подтверждение
+                        sendCameraSwitchAck(useBackCamera)
+                    }
+                }
                 else -> Log.w("WebRTCService", "Unknown message type")
             }
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling message", e)
+        }
+    }
+
+    // Метод для отправки подтверждения переключения камеры
+    private fun sendCameraSwitchAck(useBackCamera: Boolean) {
+        try {
+            val message = JSONObject().apply {
+                put("type", "switch_camera_ack")
+                put("useBackCamera", useBackCamera)
+                put("success", true)
+                put("room", roomName)
+                put("username", userName)
+            }
+            webSocketClient.send(message.toString())
+            Log.d("WebRTCService", "Sent camera switch ack")
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error sending camera switch ack", e)
         }
     }
 

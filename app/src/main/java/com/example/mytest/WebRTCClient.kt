@@ -82,6 +82,49 @@ class WebRTCClient(
         return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
     }
 
+    // В WebRTCClient.kt добавляем обработку переключения камеры
+    internal fun switchCamera(useBackCamera: Boolean) {
+        try {
+            videoCapturer?.let { capturer ->
+                if (capturer is CameraVideoCapturer) {
+                    if (useBackCamera) {
+                        // Switch to back camera
+                        val cameraEnumerator = Camera2Enumerator(context)
+                        val deviceNames = cameraEnumerator.deviceNames
+                        deviceNames.find { !cameraEnumerator.isFrontFacing(it) }?.let { backCameraId ->
+                            capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                                override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                                    Log.d("WebRTCClient", "Switched to back camera")
+                                }
+
+                                override fun onCameraSwitchError(error: String) {
+                                    Log.e("WebRTCClient", "Error switching to back camera: $error")
+                                }
+                            })
+                        }
+                    } else {
+                        // Switch to front camera
+                        val cameraEnumerator = Camera2Enumerator(context)
+                        val deviceNames = cameraEnumerator.deviceNames
+                        deviceNames.find { cameraEnumerator.isFrontFacing(it) }?.let { frontCameraId ->
+                            capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                                override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                                    Log.d("WebRTCClient", "Switched to front camera")
+                                }
+
+                                override fun onCameraSwitchError(error: String) {
+                                    Log.e("WebRTCClient", "Error switching to front camera: $error")
+                                }
+                            })
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCClient", "Error switching camera", e)
+        }
+    }
+
     private fun createLocalTracks() {
         createAudioTrack()
         createVideoTrack()
