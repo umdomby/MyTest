@@ -10,6 +10,7 @@ import javax.net.ssl.*
 
 class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
     private var webSocket: WebSocket? = null
+    private var currentUrl: String = ""
     private val client = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
@@ -44,11 +45,17 @@ class WebSocketClient(private val listener: okhttp3.WebSocketListener) {
     }
 
     fun connect(url: String) {
+        currentUrl = url
         val request = Request.Builder()
             .url(url)
             .build()
 
         webSocket = client.newWebSocket(request, listener)
+    }
+
+    fun reconnect() {
+        disconnect()
+        connect(currentUrl)
     }
 
     fun send(message: String) {

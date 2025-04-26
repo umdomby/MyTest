@@ -22,6 +22,8 @@ import androidx.core.content.ContextCompat
 import com.example.mytest.databinding.ActivityMainBinding
 import java.util.*
 import kotlin.random.Random
+import android.graphics.Color
+
 
 class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -207,38 +209,43 @@ class MainActivity : ComponentActivity() {
 
     private fun startWebRTCService(resultData: Intent) {
         try {
-            val roomName = binding.roomCodeEditText.text.toString()
-            if (roomName.isBlank()) {
+            val currentRoom = binding.roomCodeEditText.text.toString().trim()
+            if (currentRoom.isEmpty()) {
                 showToast("Введите имя комнаты")
                 return
             }
 
+            // Явно останавливаем предыдущий сервис
+            stopWebRTCService()
+
+            // Запускаем новый экземпляр
             val serviceIntent = Intent(this, WebRTCService::class.java).apply {
                 putExtra("resultCode", RESULT_OK)
                 putExtra("resultData", resultData)
-                putExtra("roomName", roomName)
+                putExtra("roomName", currentRoom) // Передаем текущее имя комнаты
             }
+
             ContextCompat.startForegroundService(this, serviceIntent)
             isServiceRunning = true
             updateButtonStates()
-            showToast("Сервис запущен с комнатой: $roomName")
+            showToast("Сервис запущен с комнатой: $currentRoom")
         } catch (e: Exception) {
-            showToast("Ошибка запуска сервиса: ${e.message}")
+            showToast("Ошибка запуска: ${e.message}")
             Log.e("MainActivity", "Ошибка запуска сервиса", e)
         }
     }
 
     private fun stopWebRTCService() {
         try {
-            val serviceIntent = Intent(this, WebRTCService::class.java).apply {
-                action = "STOP" // Явно указываем действие STOP
+            val stopIntent = Intent(this, WebRTCService::class.java).apply {
+                action = "STOP"
             }
-            stopService(serviceIntent)
+            startService(stopIntent) // Важно использовать startService для STOP
             isServiceRunning = false
             updateButtonStates()
-            showToast("Сервис остановлен")
+            showToast("Сервис полностью остановлен")
         } catch (e: Exception) {
-            showToast("Ошибка остановки сервиса: ${e.message}")
+            showToast("Ошибка остановки: ${e.message}")
             Log.e("MainActivity", "Ошибка остановки сервиса", e)
         }
     }
@@ -248,11 +255,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateButtonStates() {
-        binding.startButton.isEnabled = !isServiceRunning
-        binding.stopButton.isEnabled = isServiceRunning
-        binding.roomCodeEditText.isEnabled = !isServiceRunning
-        binding.saveCodeButton.isEnabled = !isServiceRunning
-        binding.generateCodeButton.isEnabled = !isServiceRunning
+        binding.apply {
+            startButton.isEnabled = !isServiceRunning
+            stopButton.isEnabled = isServiceRunning
+            roomCodeEditText.isEnabled = !isServiceRunning
+            saveCodeButton.isEnabled = !isServiceRunning
+            generateCodeButton.isEnabled = !isServiceRunning
+
+            // Визуальные изменения с безопасным использованием Color
+            startButton.setBackgroundColor(
+                ContextCompat.getColor(
+                    this@MainActivity,
+                    if (isServiceRunning) android.R.color.darker_gray else R.color.green
+                )
+            )
+            stopButton.setBackgroundColor(
+                ContextCompat.getColor(
+                    this@MainActivity,
+                    if (isServiceRunning) R.color.red else android.R.color.darker_gray
+                )
+            )
+        }
     }
 
     private fun checkAllPermissionsGranted() = requiredPermissions.all {

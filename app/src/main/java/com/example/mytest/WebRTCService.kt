@@ -25,7 +25,11 @@ class WebRTCService : Service() {
         var isRunning = false
             private set
         var currentRoomName = "room1"
+            private set
     }
+
+    private var shouldStop = false
+    private var isUserStopped = false
 
     private val binder = LocalBinder()
     private lateinit var webSocketClient: WebSocketClient
@@ -311,9 +315,9 @@ class WebRTCService : Service() {
         try {
             val message = JSONObject().apply {
                 put("action", "join")
-                put("room", roomName)
+                put("room", roomName) // Используем актуальное имя
                 put("username", userName)
-                put("isLeader", true) // Android всегда ведущий
+                put("isLeader", true)
             }
             webSocketClient.send(message.toString())
         } catch (e: Exception) {
@@ -530,17 +534,10 @@ class WebRTCService : Service() {
     }
 
     override fun onDestroy() {
-        isRunning = false
-        Log.d("WebRTCService", "Service destroyed")
-        handler.removeCallbacks(healthCheckRunnable)
-        try {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            cm.unregisterNetworkCallback(networkCallback)
-        } catch (e: Exception) {
-            Log.e("WebRTCService", "Error unregistering network callback", e)
+        if (!isUserStopped) {
+            // Автоматический перезапуск только если не было явной остановки
+            scheduleRestartWithWorkManager()
         }
-        cleanupAllResources()
-        scheduleRestartWithWorkManager()
         super.onDestroy()
     }
 
@@ -553,18 +550,40 @@ class WebRTCService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        intent?.let {
-            currentRoomName = it.getStringExtra("roomName") ?: "room1"
-        }
-
-        return when (intent?.action) {
+        when (intent?.action) {
             "STOP" -> {
-                stopSelf()
-                START_NOT_STICKY // Важно: предотвращаем автоматический перезапуск
+                isUserStopped = true
+                stopEverything()
+                return START_NOT_STICKY
             }
             else -> {
-                START_STICKY
+                isUserStopped = false
+                currentRoomName = intent?.getStringExtra("roomName") ?: "room1"
+                initializeWebRTC()
+                connectWebSocket()
+                isRunning = true
+                return START_STICKY
             }
+        }
+    }
+
+    private fun stopEverything() {
+        isRunning = false
+
+        try {
+            handler.removeCallbacks(healthCheckRunnable)
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            cm?.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error during cleanup", e)
+        }
+
+        cleanupAllResources()
+
+        if (isUserStopped) {
+            stopSelf()
+            // Полное завершение процесса
+            android.os.Process.killProcess(android.os.Process.myPid())
         }
     }
 
