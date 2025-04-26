@@ -22,6 +22,7 @@ import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.registerForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.mytest.databinding.ActivityMainBinding
@@ -33,7 +34,7 @@ import kotlin.random.Random
 class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var sharedPreferences: SharedPreferences
-    private var currentRoomName: String = generateRandomRoomName()
+    private var currentRoomName: String = ""
     private var isServiceRunning: Boolean = false
     private val roomList = mutableListOf<String>()
     private lateinit var roomListAdapter: ArrayAdapter<String>
@@ -88,6 +89,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadRoomList() {
+        // Загружаем список комнат
         val jsonString = sharedPreferences.getString(ROOM_LIST_KEY, null)
         jsonString?.let {
             val jsonArray = JSONArray(it)
@@ -95,12 +97,19 @@ class MainActivity : ComponentActivity() {
                 roomList.add(jsonArray.getString(i))
             }
         }
-        if (roomList.isEmpty()) {
+
+        // Загружаем последнее использованное имя комнаты
+        currentRoomName = sharedPreferences.getString(LAST_USED_ROOM_KEY, "") ?: ""
+
+        // Если нет сохраненных комнат или последнее имя пустое, генерируем новое
+        if (roomList.isEmpty() || currentRoomName.isEmpty()) {
+            currentRoomName = generateRandomRoomName()
             roomList.add(currentRoomName)
             saveRoomList()
-        } else {
-            currentRoomName = roomList.first()
         }
+
+        // Устанавливаем последнее использованное имя в поле ввода
+        binding.roomCodeEditText.setText(formatRoomName(currentRoomName))
     }
 
     private fun saveRoomList() {
@@ -108,6 +117,7 @@ class MainActivity : ComponentActivity() {
         roomList.forEach { jsonArray.put(it) }
         sharedPreferences.edit()
             .putString(ROOM_LIST_KEY, jsonArray.toString())
+            .putString(LAST_USED_ROOM_KEY, currentRoomName)
             .apply()
     }
 
@@ -120,58 +130,98 @@ class MainActivity : ComponentActivity() {
         binding.roomListView.adapter = roomListAdapter
         binding.roomListView.setOnItemClickListener { _, _, position, _ ->
             currentRoomName = roomList[position]
-            binding.roomCodeEditText.setText(currentRoomName)
+            binding.roomCodeEditText.setText(formatRoomName(currentRoomName))
             updateButtonStates()
         }
     }
 
     private fun setupUI() {
-        binding.roomCodeEditText.setText(currentRoomName)
-        binding.roomCodeEditText.clearFocus()
-
-        // Проверка валидности имени комнаты для активации кнопки Save
+        // Обработчик ввода с автоматической вставкой тире
         binding.roomCodeEditText.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            private var isFormatting = false
+            private var deletingHyphen = false
+            private var hyphenPositions = listOf(4, 9, 14)
+
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                if (isFormatting) return
+
+                // Проверяем, удаляется ли тире
+                if (count == 1 && after == 0 && hyphenPositions.contains(start)) {
+                    deletingHyphen = true
+                } else {
+                    deletingHyphen = false
+                }
+            }
+
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+
             override fun afterTextChanged(s: Editable?) {
+                if (isFormatting || isServiceRunning) return
+
+                isFormatting = true
+
                 val text = s.toString().replace("-", "")
-                binding.saveCodeButton.isEnabled = text.length == 16
+                if (text.length > 16) {
+                    s?.replace(0, s.length, formatRoomName(currentRoomName))
+                } else {
+                    val formatted = StringBuilder()
+                    for (i in text.indices) {
+                        if (i > 0 && i % 4 == 0) {
+                            formatted.append('-')
+                        }
+                        formatted.append(text[i])
+                    }
+
+                    // Если удаляли тире, корректируем позицию курсора
+                    val cursorPos = binding.roomCodeEditText.selectionStart
+                    if (deletingHyphen && cursorPos > 0 && cursorPos < formatted.length &&
+                        formatted[cursorPos] == '-') {
+                        formatted.deleteCharAt(cursorPos)
+                    }
+
+                    s?.replace(0, s.length, formatted.toString())
+                }
+
+                isFormatting = false
+
+                // Проверяем валидность имени для активации кнопки Save
+                val cleanName = binding.roomCodeEditText.text.toString().replace("-", "")
+                binding.saveCodeButton.isEnabled = cleanName.length == 16 &&
+                        !roomList.contains(cleanName)
             }
         })
 
-        // Кнопка Generate - генерирует и сразу подставляет имя
         binding.generateCodeButton.setOnClickListener {
-            val randomRoomName = generateRandomRoomName()
-            binding.roomCodeEditText.setText(randomRoomName)
-            showToast("Generated: $randomRoomName")
+            currentRoomName = generateRandomRoomName()
+            binding.roomCodeEditText.setText(formatRoomName(currentRoomName))
+            showToast("Generated: $currentRoomName")
         }
 
-        // Кнопка Delete - удаляет выбранную комнату из списка
         binding.deleteRoomButton.setOnClickListener {
-            val selectedRoom = binding.roomCodeEditText.text.toString()
+            val selectedRoom = binding.roomCodeEditText.text.toString().replace("-", "")
             if (roomList.contains(selectedRoom)) {
                 showDeleteConfirmationDialog(selectedRoom)
             } else {
-                showToast("Room not found in list")
+                showToast(getString(R.string.room_not_found))
             }
         }
 
-        // Остальные кнопки (без изменений)
         binding.saveCodeButton.setOnClickListener {
-            val newRoomName = binding.roomCodeEditText.text.toString().trim()
-            if (newRoomName.isNotBlank()) {
+            val newRoomName = binding.roomCodeEditText.text.toString().replace("-", "")
+            if (newRoomName.length == 16) {
                 if (!roomList.contains(newRoomName)) {
                     roomList.add(0, newRoomName)
+                    currentRoomName = newRoomName
                     saveRoomList()
                     roomListAdapter.notifyDataSetChanged()
-                    currentRoomName = newRoomName
-                    showToast("Room saved: $newRoomName")
+                    showToast("Room saved: ${formatRoomName(newRoomName)}")
                 } else {
                     showToast("Room already exists")
                 }
             }
         }
 
+        // Остальные кнопки без изменений
         binding.copyCodeButton.setOnClickListener {
             val roomName = binding.roomCodeEditText.text.toString()
             val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
@@ -196,7 +246,7 @@ class MainActivity : ComponentActivity() {
                 return@setOnClickListener
             }
 
-            currentRoomName = binding.roomCodeEditText.text.toString().trim()
+            currentRoomName = binding.roomCodeEditText.text.toString().replace("-", "")
             if (currentRoomName.isEmpty()) {
                 showToast("Enter room name")
                 return@setOnClickListener
@@ -220,7 +270,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Диалог подтверждения удаления комнаты
+    // Форматирование имени комнаты с тире
+    private fun formatRoomName(name: String): String {
+        if (name.length != 16) return name
+
+        return buildString {
+            for (i in 0 until 16) {
+                if (i > 0 && i % 4 == 0) append('-')
+                append(name[i])
+            }
+        }
+    }
+
     private fun showDeleteConfirmationDialog(roomName: String) {
         if (roomList.size <= 1) {
             showToast(getString(R.string.cannot_delete_last))
@@ -228,36 +289,31 @@ class MainActivity : ComponentActivity() {
         }
 
         MaterialAlertDialogBuilder(this)
-            .setTitle("Delete Room")
-            .setMessage("Are you sure you want to delete room '$roomName'?")
-            .setPositiveButton("Delete") { _, _ ->
+            .setTitle(getString(R.string.delete_confirm_title))
+            .setMessage(getString(R.string.delete_confirm_message, formatRoomName(roomName)))
+            .setPositiveButton(getString(R.string.delete_button)) { _, _ ->
                 roomList.remove(roomName)
                 saveRoomList()
                 roomListAdapter.notifyDataSetChanged()
 
-                // Если удалили текущую комнату, выбираем первую из списка
                 if (currentRoomName == roomName) {
                     currentRoomName = roomList.first()
-                    binding.roomCodeEditText.setText(currentRoomName)
+                    binding.roomCodeEditText.setText(formatRoomName(currentRoomName))
                 }
 
                 showToast("Room deleted")
             }
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton(getString(R.string.cancel_button), null)
             .show()
     }
 
-    // Остальные методы без изменений
     private fun generateRandomRoomName(): String {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         val random = Random.Default
         val code = StringBuilder()
 
-        repeat(4) { group ->
-            repeat(4) {
-                code.append(chars[random.nextInt(chars.length)])
-            }
-            if (group < 3) code.append('-')
+        repeat(16) {
+            code.append(chars[random.nextInt(chars.length)])
         }
 
         return code.toString()
@@ -274,7 +330,7 @@ class MainActivity : ComponentActivity() {
             ContextCompat.startForegroundService(this, serviceIntent)
             isServiceRunning = true
             updateButtonStates()
-            showToast("Service started: $currentRoomName")
+            showToast("Service started: ${formatRoomName(currentRoomName)}")
         } catch (e: Exception) {
             showToast("Start error: ${e.message}")
             Log.e("MainActivity", "Service start error", e)
@@ -302,9 +358,11 @@ class MainActivity : ComponentActivity() {
             stopButton.isEnabled = isServiceRunning
             roomCodeEditText.isEnabled = !isServiceRunning
             saveCodeButton.isEnabled = !isServiceRunning &&
-                    binding.roomCodeEditText.text.toString().replace("-", "").length == 16
+                    binding.roomCodeEditText.text.toString().replace("-", "").length == 16 &&
+                    !roomList.contains(binding.roomCodeEditText.text.toString().replace("-", ""))
             generateCodeButton.isEnabled = !isServiceRunning
-            deleteRoomButton.isEnabled = !isServiceRunning
+            deleteRoomButton.isEnabled = !isServiceRunning &&
+                    roomList.contains(binding.roomCodeEditText.text.toString().replace("-", ""))
 
             startButton.setBackgroundColor(
                 ContextCompat.getColor(
@@ -351,5 +409,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val PREFS_NAME = "WebRTCPrefs"
         private const val ROOM_LIST_KEY = "room_list"
+        private const val LAST_USED_ROOM_KEY = "last_used_room"
     }
 }

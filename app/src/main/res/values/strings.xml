@@ -8,4 +8,5 @@
     <string name="delete_confirm_message">Are you sure you want to delete room %1$s?</string>
     <string name="delete_button">Delete</string>
     <string name="cancel_button">Cancel</string>
+    <string name="room_name_hint">XXXX-XXXX-XXXX-XXXX</string>
 </resources>
