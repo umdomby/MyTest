@@ -20,6 +20,12 @@ import java.util.concurrent.TimeUnit
 import android.net.NetworkRequest
 
 class WebRTCService : Service() {
+
+    companion object {
+        @Volatile
+        var isRunning = false
+            private set
+    }
     private val binder = LocalBinder()
     private lateinit var webSocketClient: WebSocketClient
     private lateinit var webRTCClient: WebRTCClient
@@ -31,7 +37,7 @@ class WebRTCService : Service() {
 
     private lateinit var remoteView: SurfaceViewRenderer
 
-    private val roomName = "room1"
+    private var roomName = "room1" // Будет перезаписано при старте
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://ardua.site/ws"
 
@@ -78,7 +84,7 @@ class WebRTCService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-
+        isRunning = true
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(this, WebRTCService::class.java).apply {
             action = "CHECK_CONNECTION"
@@ -523,6 +529,7 @@ class WebRTCService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         Log.d("WebRTCService", "Service destroyed")
         handler.removeCallbacks(healthCheckRunnable)
         try {
@@ -545,15 +552,19 @@ class WebRTCService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        intent?.action?.let {
-            when (it) {
-                "RECONNECT" -> reconnect()
-                "STOP" -> stopSelf()
-            }
+        intent?.let {
+            roomName = it.getStringExtra("roomName") ?: "room1"
         }
 
-        // Перезапускаем сервис, если он будет убит системой
-        return START_REDELIVER_INTENT
+        return when (intent?.action) {
+            "STOP" -> {
+                stopSelf()
+                START_NOT_STICKY
+            }
+            else -> {
+                START_STICKY
+            }
+        }
     }
 
     private fun scheduleRestartWithWorkManager() {
