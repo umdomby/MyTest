@@ -1,3 +1,4 @@
+// file: src/main/java/com/example/mytest/WebRTCService.kt
 package com.example.mytest
 
 import android.app.*
@@ -25,7 +26,7 @@ class WebRTCService : Service() {
         var isRunning = false
             private set
         var currentRoomName = "room1"
-            private set
+            internal set
     }
 
     private var shouldStop = false
@@ -49,8 +50,6 @@ class WebRTCService : Service() {
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
     private val handler = Handler(Looper.getMainLooper())
-
-
 
     inner class LocalBinder : Binder() {
         fun getService(): WebRTCService = this@WebRTCService
@@ -90,6 +89,10 @@ class WebRTCService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+
+        // Инициализация имени комнаты из статического поля
+        roomName = currentRoomName
+
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(this, WebRTCService::class.java).apply {
             action = "CHECK_CONNECTION"
@@ -98,29 +101,30 @@ class WebRTCService : Service() {
             this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        handler.post(healthCheckRunnable) // Запускаем проверку активности
+        handler.post(healthCheckRunnable)
 
-        // Проверяем каждые 5 минут
         alarmManager.setInexactRepeating(
             AlarmManager.ELAPSED_REALTIME_WAKEUP,
             SystemClock.elapsedRealtime() + AlarmManager.INTERVAL_FIFTEEN_MINUTES,
             AlarmManager.INTERVAL_FIFTEEN_MINUTES,
             pendingIntent
         )
-        Log.d("WebRTCService", "Service created")
+
+        Log.d("WebRTCService", "Service created with room: $roomName")
+
         try {
             registerReceiver(connectivityReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
             createNotificationChannel()
             startForegroundService()
             initializeWebRTC()
             connectWebSocket()
+            registerNetworkCallback() // Добавлен вызов регистрации коллбэка сети
         } catch (e: Exception) {
             Log.e("WebRTCService", "Initialization failed", e)
             stopSelf()
         }
     }
 
-    // В класс WebRTCService добавить:
     private fun registerNetworkCallback() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -158,7 +162,7 @@ class WebRTCService : Service() {
     }
 
     private fun initializeWebRTC() {
-        Log.d("WebRTCService", "Initializing WebRTC")
+        Log.d("WebRTCService", "Initializing WebRTC for room: $roomName")
         cleanupWebRTCResources()
 
         eglBase = EglBase.create()
@@ -257,7 +261,7 @@ class WebRTCService : Service() {
             }
 
             override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                Log.d("WebRTCService", "WebSocket connected")
+                Log.d("WebRTCService", "WebSocket connected for room: $roomName")
                 updateNotification("Connected to server")
                 joinRoom()
             }
@@ -289,7 +293,7 @@ class WebRTCService : Service() {
         }
 
         handler.postDelayed({
-            Log.d("WebRTCService", "Reconnect attempt $reconnectAttempts...")
+            Log.d("WebRTCService", "Reconnect attempt $reconnectAttempts for room: $roomName")
             updateNotification("Reconnecting (attempt $reconnectAttempts)...")
             reconnect()
         }, delay)
@@ -298,12 +302,20 @@ class WebRTCService : Service() {
     fun reconnect() {
         handler.post {
             try {
+                Log.d("WebRTCService", "Starting reconnect process for room: $roomName")
+
+                // Очищаем предыдущие соединения
                 if (::webSocketClient.isInitialized) {
                     webSocketClient.disconnect()
                 }
+
                 cleanupWebRTCResources()
+
+                // Инициализируем заново с текущим именем комнаты
                 initializeWebRTC()
                 connectWebSocket()
+
+                reconnectAttempts = 0 // Сбрасываем счетчик попыток после успешного переподключения
             } catch (e: Exception) {
                 Log.e("WebRTCService", "Reconnection error", e)
                 scheduleReconnect()
@@ -315,13 +327,14 @@ class WebRTCService : Service() {
         try {
             val message = JSONObject().apply {
                 put("action", "join")
-                put("room", roomName) // Используем актуальное имя
+                put("room", roomName)
                 put("username", userName)
                 put("isLeader", true)
             }
             webSocketClient.send(message.toString())
+            Log.d("WebRTCService", "Sent join request for room: $roomName")
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Error joining room", e)
+            Log.e("WebRTCService", "Error joining room: $roomName", e)
         }
     }
 
@@ -558,7 +571,13 @@ class WebRTCService : Service() {
             }
             else -> {
                 isUserStopped = false
-                currentRoomName = intent?.getStringExtra("roomName") ?: "room1"
+                // Обновляем имя комнаты из интента
+                intent?.getStringExtra("roomName")?.let {
+                    roomName = it
+                    currentRoomName = it
+                }
+                Log.d("WebRTCService", "Starting service with room: $roomName")
+
                 initializeWebRTC()
                 connectWebSocket()
                 isRunning = true
@@ -566,7 +585,6 @@ class WebRTCService : Service() {
             }
         }
     }
-
     private fun stopEverything() {
         isRunning = false
 

@@ -215,14 +215,13 @@ class MainActivity : ComponentActivity() {
                 return
             }
 
-            // Явно останавливаем предыдущий сервис
-            stopWebRTCService()
+            // Обновляем текущее имя комнаты в сервисе
+            WebRTCService.currentRoomName = currentRoom
 
-            // Запускаем новый экземпляр
             val serviceIntent = Intent(this, WebRTCService::class.java).apply {
                 putExtra("resultCode", RESULT_OK)
                 putExtra("resultData", resultData)
-                putExtra("roomName", currentRoom) // Передаем текущее имя комнаты
+                putExtra("roomName", currentRoom) // Явно передаем имя комнаты
             }
 
             ContextCompat.startForegroundService(this, serviceIntent)
