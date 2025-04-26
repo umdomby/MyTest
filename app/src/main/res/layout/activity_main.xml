@@ -131,7 +131,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Start"
-            app:icon="@drawable/ic_stop"
+            app:icon="@drawable/ic_play"
             app:iconTint="?attr/colorOnSecondaryContainer"/>
 
         <Button

@@ -1,33 +1,21 @@
+<!-- themes.xml -->
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Базовая тема приложения -->
-    <!-- Base application theme - Dark with red colors -->
     <style name="Theme.MyTest" parent="Theme.Material3.Dark">
-        <!-- Primary colors -->
         <item name="colorPrimary">@color/green</item>
         <item name="colorOnPrimary">@color/white</item>
         <item name="colorPrimaryContainer">@color/dark_gray</item>
         <item name="colorOnPrimaryContainer">@color/white</item>
-
-        <!-- Surface colors -->
         <item name="colorSurface">@color/black</item>
         <item name="colorOnSurface">@color/white</item>
         <item name="colorSurfaceVariant">@color/medium_gray</item>
         <item name="colorOnSurfaceVariant">@color/text_secondary</item>
-
-        <!-- Background colors -->
         <item name="colorBackgroundFloating">@color/black</item>
         <item name="colorOnBackground">@color/white</item>
-
-        <!-- Error colors -->
         <item name="colorError">@color/red</item>
         <item name="colorOnError">@color/white</item>
         <item name="colorErrorContainer">@color/dark_gray</item>
         <item name="colorOnErrorContainer">@color/red</item>
-
-        <!-- Outline -->
         <item name="colorOutline">@color/light_gray</item>
-
-        <!-- Button styles -->
         <item name="materialButtonStyle">@style/Widget.MyTest.Button</item>
         <item name="materialButtonOutlinedStyle">@style/Widget.MyTest.Button.Outlined</item>
     </style>
@@ -35,11 +23,15 @@
     <style name="Widget.MyTest.Button" parent="Widget.Material3.Button">
         <item name="backgroundTint">@color/red</item>
         <item name="android:textColor">@color/white</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:padding">16dp</item>
+        <item name="android:minHeight">28dp</item>
+        <item name="cornerRadius">8dp</item>
     </style>
 
     <style name="Widget.MyTest.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
         <item name="strokeColor">@color/red</item>
         <item name="android:textColor">@color/red</item>
     </style>
-
 </resources>
