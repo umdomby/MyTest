@@ -117,23 +117,31 @@
             android:padding="8dp"/>
     </com.google.android.material.card.MaterialCardView>
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/startButton"
-        style="@style/Widget.Material3.Button"
+    <!-- activity_main.xml (только измененные части) -->
+    <LinearLayout
+        android:id="@+id/startStopContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Start service"
-        android:layout_marginTop="16dp"
-        app:icon="@drawable/ic_play"
-        app:iconTint="@color/white"/>
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/stopButton"
-        style="@style/Widget.Material3.Button.TonalButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Stop service"
-        android:layout_marginTop="8dp"
-        app:icon="@drawable/ic_stop"
-        app:iconTint="?attr/colorOnSecondaryContainer"/>
+        <Button
+            android:id="@+id/startButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Start"
+            app:icon="@drawable/ic_stop"
+            app:iconTint="?attr/colorOnSecondaryContainer"/>
+
+        <Button
+            android:id="@+id/stopButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Stop"
+            android:backgroundTint="@color/red"
+            app:icon="@drawable/ic_stop"
+            app:iconTint="?attr/colorOnSecondaryContainer"/>
+    </LinearLayout>
 </LinearLayout>
