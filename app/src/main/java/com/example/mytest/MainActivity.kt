@@ -1,6 +1,9 @@
+
 package com.example.mytest
 
+
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -15,21 +18,23 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.mytest.databinding.ActivityMainBinding
+import org.json.JSONArray
 import java.util.*
 import kotlin.random.Random
-import android.graphics.Color
-
 
 class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var sharedPreferences: SharedPreferences
     private var currentRoomName: String = DEFAULT_ROOM_NAME
     private var isServiceRunning: Boolean = false
+    private val roomList = mutableListOf<String>()
+    private lateinit var roomListAdapter: ArrayAdapter<String>
 
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
@@ -42,7 +47,6 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         if (permissions.all { it.value }) {
             if (isCameraPermissionGranted()) {
-                // Прямой запуск mediaProjectionLauncher
                 val mediaManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjectionLauncher.launch(mediaManager.createScreenCaptureIntent())
                 checkBatteryOptimization()
@@ -73,11 +77,75 @@ class MainActivity : ComponentActivity() {
         setContentView(binding.root)
 
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        currentRoomName = sharedPreferences.getString(ROOM_NAME_KEY, DEFAULT_ROOM_NAME) ?: DEFAULT_ROOM_NAME
-        isServiceRunning = isServiceRunning()
-
+        loadRoomList()
         setupUI()
+        setupRoomListAdapter()
         updateButtonStates()
+    }
+
+    private fun loadRoomList() {
+        val jsonString = sharedPreferences.getString(ROOM_LIST_KEY, null)
+        jsonString?.let {
+            val jsonArray = JSONArray(it)
+            for (i in 0 until jsonArray.length()) {
+                roomList.add(jsonArray.getString(i))
+            }
+        }
+        if (roomList.isEmpty()) {
+            roomList.add(DEFAULT_ROOM_NAME)
+        }
+        currentRoomName = roomList.first()
+    }
+
+    private fun saveRoomList() {
+        val jsonArray = JSONArray()
+        roomList.forEach { jsonArray.put(it) }
+        sharedPreferences.edit()
+            .putString(ROOM_LIST_KEY, jsonArray.toString())
+            .apply()
+    }
+
+    private fun setupRoomListAdapter() {
+        roomListAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_list_item_1,
+            roomList
+        )
+        binding.roomListView.adapter = roomListAdapter
+        binding.roomListView.setOnItemClickListener { _, _, position, _ ->
+            currentRoomName = roomList[position]
+            binding.roomCodeEditText.setText(currentRoomName)
+            updateButtonStates()
+        }
+        binding.roomListView.setOnItemLongClickListener { _, _, position, _ ->
+            showDeleteRoomDialog(position)
+            true
+        }
+    }
+
+    private fun showDeleteRoomDialog(position: Int) {
+        if (roomList.size <= 1) {
+            showToast("Нельзя удалить последнюю комнату")
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Удаление комнаты")
+            .setMessage("Вы уверены, что хотите удалить комнату '${roomList[position]}'?")
+            .setPositiveButton("Удалить") { _, _ ->
+                val removedRoom = roomList.removeAt(position)
+                saveRoomList()
+                roomListAdapter.notifyDataSetChanged()
+
+                if (currentRoomName == removedRoom) {
+                    currentRoomName = roomList.first()
+                    binding.roomCodeEditText.setText(currentRoomName)
+                }
+
+                showToast("Комната удалена")
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun setupUI() {
@@ -119,12 +187,19 @@ class MainActivity : ComponentActivity() {
                 return@setOnClickListener
             }
 
-            val newRoomName = binding.roomCodeEditText.text.toString()
-            if (newRoomName.isNotBlank() && newRoomName != currentRoomName) {
-                saveRoomName(newRoomName)
-                showToast("Имя комнаты сохранено: $newRoomName")
+            val newRoomName = binding.roomCodeEditText.text.toString().trim()
+            if (newRoomName.isNotBlank()) {
+                if (!roomList.contains(newRoomName)) {
+                    roomList.add(0, newRoomName)
+                    saveRoomList()
+                    roomListAdapter.notifyDataSetChanged()
+                    currentRoomName = newRoomName
+                    showToast("Комната сохранена: $newRoomName")
+                } else {
+                    showToast("Комната уже существует")
+                }
             } else {
-                showToast("Введите новое имя комнаты")
+                showToast("Введите название комнаты")
             }
         }
 
@@ -136,7 +211,7 @@ class MainActivity : ComponentActivity() {
 
             val randomRoomName = generateRandomRoomName()
             binding.roomCodeEditText.setText(randomRoomName)
-            showToast("Сгенерировано новое имя: $randomRoomName")
+            showToast("Сгенерировано: $randomRoomName")
         }
 
         binding.copyCodeButton.setOnClickListener {
@@ -144,7 +219,7 @@ class MainActivity : ComponentActivity() {
             val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Room name", roomName)
             clipboard.setPrimaryClip(clip)
-            showToast("Скопировано в буфер обмена: $roomName")
+            showToast("Скопировано: $roomName")
         }
 
         binding.shareCodeButton.setOnClickListener {
@@ -163,8 +238,13 @@ class MainActivity : ComponentActivity() {
                 return@setOnClickListener
             }
 
+            currentRoomName = binding.roomCodeEditText.text.toString().trim()
+            if (currentRoomName.isEmpty()) {
+                showToast("Введите название комнаты")
+                return@setOnClickListener
+            }
+
             if (checkAllPermissionsGranted() && isCameraPermissionGranted()) {
-                // Исправленная строка - используем mediaProjectionLauncher вместо requestMediaProjection()
                 val mediaManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjectionLauncher.launch(mediaManager.createScreenCaptureIntent())
                 checkBatteryOptimization()
@@ -178,7 +258,6 @@ class MainActivity : ComponentActivity() {
                 showToast("Сервис не запущен")
                 return@setOnClickListener
             }
-
             stopWebRTCService()
         }
     }
@@ -195,39 +274,21 @@ class MainActivity : ComponentActivity() {
             if (group < 3) code.append('-')
         }
 
-        // Сохраняем сгенерированное имя сразу
-        saveRoomName(code.toString())
         return code.toString()
-    }
-
-    private fun saveRoomName(roomName: String) {
-        currentRoomName = roomName
-        sharedPreferences.edit()
-            .putString(ROOM_NAME_KEY, roomName)
-            .apply()
     }
 
     private fun startWebRTCService(resultData: Intent) {
         try {
-            val currentRoom = binding.roomCodeEditText.text.toString().trim()
-            if (currentRoom.isEmpty()) {
-                showToast("Введите имя комнаты")
-                return
-            }
-
-            // Обновляем текущее имя комнаты в сервисе
-            WebRTCService.currentRoomName = currentRoom
-
+            WebRTCService.currentRoomName = currentRoomName
             val serviceIntent = Intent(this, WebRTCService::class.java).apply {
                 putExtra("resultCode", RESULT_OK)
                 putExtra("resultData", resultData)
-                putExtra("roomName", currentRoom) // Явно передаем имя комнаты
+                putExtra("roomName", currentRoomName)
             }
-
             ContextCompat.startForegroundService(this, serviceIntent)
             isServiceRunning = true
             updateButtonStates()
-            showToast("Сервис запущен с комнатой: $currentRoom")
+            showToast("Сервис запущен: $currentRoomName")
         } catch (e: Exception) {
             showToast("Ошибка запуска: ${e.message}")
             Log.e("MainActivity", "Ошибка запуска сервиса", e)
@@ -239,10 +300,10 @@ class MainActivity : ComponentActivity() {
             val stopIntent = Intent(this, WebRTCService::class.java).apply {
                 action = "STOP"
             }
-            startService(stopIntent) // Важно использовать startService для STOP
+            startService(stopIntent)
             isServiceRunning = false
             updateButtonStates()
-            showToast("Сервис полностью остановлен")
+            showToast("Сервис остановлен")
         } catch (e: Exception) {
             showToast("Ошибка остановки: ${e.message}")
             Log.e("MainActivity", "Ошибка остановки сервиса", e)
@@ -261,7 +322,6 @@ class MainActivity : ComponentActivity() {
             saveCodeButton.isEnabled = !isServiceRunning
             generateCodeButton.isEnabled = !isServiceRunning
 
-            // Визуальные изменения с безопасным использованием Color
             startButton.setBackgroundColor(
                 ContextCompat.getColor(
                     this@MainActivity,
@@ -306,7 +366,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val PREFS_NAME = "WebRTCPrefs"
-        private const val ROOM_NAME_KEY = "room_name"
+        private const val ROOM_LIST_KEY = "room_list"
         private const val DEFAULT_ROOM_NAME = "room1"
     }
 }

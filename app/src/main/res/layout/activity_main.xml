@@ -63,6 +63,20 @@
             android:layout_marginStart="4dp"/>
     </LinearLayout>
 
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Сохраненные комнаты:"
+        android:textSize="16sp"
+        android:layout_marginBottom="8dp"/>
+
+    <ListView
+        android:id="@+id/roomListView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:choiceMode="singleChoice"/>
+
     <Button
         android:id="@+id/startButton"
         android:layout_width="match_parent"
