@@ -22,10 +22,11 @@ import android.net.NetworkRequest
 class WebRTCService : Service() {
 
     companion object {
-        @Volatile
         var isRunning = false
             private set
+        var currentRoomName = "room1"
     }
+
     private val binder = LocalBinder()
     private lateinit var webSocketClient: WebSocketClient
     private lateinit var webRTCClient: WebRTCClient
@@ -553,13 +554,13 @@ class WebRTCService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.let {
-            roomName = it.getStringExtra("roomName") ?: "room1"
+            currentRoomName = it.getStringExtra("roomName") ?: "room1"
         }
 
         return when (intent?.action) {
             "STOP" -> {
                 stopSelf()
-                START_NOT_STICKY
+                START_NOT_STICKY // Важно: предотвращаем автоматический перезапуск
             }
             else -> {
                 START_STICKY

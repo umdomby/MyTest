@@ -193,6 +193,8 @@ class MainActivity : ComponentActivity() {
             if (group < 3) code.append('-')
         }
 
+        // Сохраняем сгенерированное имя сразу
+        saveRoomName(code.toString())
         return code.toString()
     }
 
@@ -205,15 +207,21 @@ class MainActivity : ComponentActivity() {
 
     private fun startWebRTCService(resultData: Intent) {
         try {
+            val roomName = binding.roomCodeEditText.text.toString()
+            if (roomName.isBlank()) {
+                showToast("Введите имя комнаты")
+                return
+            }
+
             val serviceIntent = Intent(this, WebRTCService::class.java).apply {
                 putExtra("resultCode", RESULT_OK)
                 putExtra("resultData", resultData)
-                putExtra("roomName", currentRoomName)
+                putExtra("roomName", roomName)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
             isServiceRunning = true
             updateButtonStates()
-            showToast("Сервис запущен с комнатой: $currentRoomName")
+            showToast("Сервис запущен с комнатой: $roomName")
         } catch (e: Exception) {
             showToast("Ошибка запуска сервиса: ${e.message}")
             Log.e("MainActivity", "Ошибка запуска сервиса", e)
@@ -222,7 +230,9 @@ class MainActivity : ComponentActivity() {
 
     private fun stopWebRTCService() {
         try {
-            val serviceIntent = Intent(this, WebRTCService::class.java)
+            val serviceIntent = Intent(this, WebRTCService::class.java).apply {
+                action = "STOP" // Явно указываем действие STOP
+            }
             stopService(serviceIntent)
             isServiceRunning = false
             updateButtonStates()
