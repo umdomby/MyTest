@@ -1,3 +1,4 @@
+// file: app/build.gradle.kts
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -36,6 +37,8 @@ android {
     }
     buildFeatures {
         compose = true
+        viewBinding = true
+        dataBinding = true
     }
 }
 
@@ -51,6 +54,9 @@ dependencies {
 
     // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.7.1")
+
+    // Для view binding
+    implementation("androidx.core:core-ktx:1.12.0")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
