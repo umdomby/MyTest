@@ -72,4 +72,11 @@
     <color name="md_theme_dark_surfaceTint">#D0BCFF</color>
     <color name="md_theme_dark_outlineVariant">#49454F</color>
     <color name="md_theme_dark_scrim">#000000</color>
+
+
+    <!-- Дополнительные оттенки -->
+    <color name="dark_gray">#FF1E1E1E</color> <!-- Для поверхностей -->
+    <color name="medium_gray">#FF2D2D2D</color> <!-- Для карточек -->
+    <color name="light_gray">#FF424242</color> <!-- Для разделителей -->
+    <color name="text_secondary">#FFB3B3B3</color> <!-- Вторичный текст -->
 </resources>

@@ -1,4 +1,4 @@
-// MainActivity.kt
+// file: src/main/java/com/example/mytest/MainActivity.kt
 package com.example.mytest
 
 import android.Manifest
@@ -75,8 +75,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Prevent keyboard from popping up automatically
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -125,77 +123,41 @@ class MainActivity : ComponentActivity() {
             binding.roomCodeEditText.setText(currentRoomName)
             updateButtonStates()
         }
-        binding.roomListView.setOnItemLongClickListener { _, _, position, _ ->
-            showDeleteRoomDialog(position)
-            true
-        }
-    }
-
-    private fun showDeleteRoomDialog(position: Int) {
-        if (roomList.size <= 1) {
-            showToast("Cannot delete the last room")
-            return
-        }
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Delete Room")
-            .setMessage("Are you sure you want to delete room '${roomList[position]}'?")
-            .setPositiveButton("Delete") { _, _ ->
-                val removedRoom = roomList.removeAt(position)
-                saveRoomList()
-                roomListAdapter.notifyDataSetChanged()
-
-                if (currentRoomName == removedRoom) {
-                    currentRoomName = roomList.first()
-                    binding.roomCodeEditText.setText(currentRoomName)
-                }
-
-                showToast("Room deleted")
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun setupUI() {
         binding.roomCodeEditText.setText(currentRoomName)
         binding.roomCodeEditText.clearFocus()
 
+        // Проверка валидности имени комнаты для активации кнопки Save
         binding.roomCodeEditText.addTextChangedListener(object : TextWatcher {
-            private var isFormatting = false
-
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-
             override fun afterTextChanged(s: Editable?) {
-                if (isFormatting || isServiceRunning) return
-
-                isFormatting = true
-
-                val text = s.toString().replace("-", "").uppercase(Locale.getDefault())
-                if (text.length > 12) {
-                    s?.replace(0, s.length, currentRoomName)
-                } else {
-                    val formatted = StringBuilder()
-                    for (i in text.indices) {
-                        if (i > 0 && i % 4 == 0) {
-                            formatted.append('-')
-                        }
-                        formatted.append(text[i])
-                    }
-                    s?.replace(0, s.length, formatted.toString())
-                }
-
-                isFormatting = false
+                val text = s.toString().replace("-", "")
+                binding.saveCodeButton.isEnabled = text.length == 16
             }
         })
 
-        binding.saveCodeButton.setOnClickListener {
-            if (isServiceRunning) {
-                showToast("Stop the service first")
-                return@setOnClickListener
-            }
+        // Кнопка Generate - генерирует и сразу подставляет имя
+        binding.generateCodeButton.setOnClickListener {
+            val randomRoomName = generateRandomRoomName()
+            binding.roomCodeEditText.setText(randomRoomName)
+            showToast("Generated: $randomRoomName")
+        }
 
+        // Кнопка Delete - удаляет выбранную комнату из списка
+        binding.deleteRoomButton.setOnClickListener {
+            val selectedRoom = binding.roomCodeEditText.text.toString()
+            if (roomList.contains(selectedRoom)) {
+                showDeleteConfirmationDialog(selectedRoom)
+            } else {
+                showToast("Room not found in list")
+            }
+        }
+
+        // Остальные кнопки (без изменений)
+        binding.saveCodeButton.setOnClickListener {
             val newRoomName = binding.roomCodeEditText.text.toString().trim()
             if (newRoomName.isNotBlank()) {
                 if (!roomList.contains(newRoomName)) {
@@ -207,20 +169,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     showToast("Room already exists")
                 }
-            } else {
-                showToast("Enter room name")
             }
-        }
-
-        binding.generateCodeButton.setOnClickListener {
-            if (isServiceRunning) {
-                showToast("Stop the service first")
-                return@setOnClickListener
-            }
-
-            val randomRoomName = generateRandomRoomName()
-            binding.roomCodeEditText.setText(randomRoomName)
-            showToast("Generated: $randomRoomName")
         }
 
         binding.copyCodeButton.setOnClickListener {
@@ -271,6 +220,34 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Диалог подтверждения удаления комнаты
+    private fun showDeleteConfirmationDialog(roomName: String) {
+        if (roomList.size <= 1) {
+            showToast(getString(R.string.cannot_delete_last))
+            return
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Delete Room")
+            .setMessage("Are you sure you want to delete room '$roomName'?")
+            .setPositiveButton("Delete") { _, _ ->
+                roomList.remove(roomName)
+                saveRoomList()
+                roomListAdapter.notifyDataSetChanged()
+
+                // Если удалили текущую комнату, выбираем первую из списка
+                if (currentRoomName == roomName) {
+                    currentRoomName = roomList.first()
+                    binding.roomCodeEditText.setText(currentRoomName)
+                }
+
+                showToast("Room deleted")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    // Остальные методы без изменений
     private fun generateRandomRoomName(): String {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         val random = Random.Default
@@ -297,10 +274,10 @@ class MainActivity : ComponentActivity() {
             ContextCompat.startForegroundService(this, serviceIntent)
             isServiceRunning = true
             updateButtonStates()
-            showToast("Сервис запущен: $currentRoomName")
+            showToast("Service started: $currentRoomName")
         } catch (e: Exception) {
-            showToast("Ошибка запуска: ${e.message}")
-            Log.e("MainActivity", "Ошибка запуска сервиса", e)
+            showToast("Start error: ${e.message}")
+            Log.e("MainActivity", "Service start error", e)
         }
     }
 
@@ -312,15 +289,11 @@ class MainActivity : ComponentActivity() {
             startService(stopIntent)
             isServiceRunning = false
             updateButtonStates()
-            showToast("Сервис остановлен")
+            showToast("Service stopped")
         } catch (e: Exception) {
-            showToast("Ошибка остановки: ${e.message}")
-            Log.e("MainActivity", "Ошибка остановки сервиса", e)
+            showToast("Stop error: ${e.message}")
+            Log.e("MainActivity", "Service stop error", e)
         }
-    }
-
-    private fun isServiceRunning(): Boolean {
-        return WebRTCService.isRunning
     }
 
     private fun updateButtonStates() {
@@ -328,8 +301,10 @@ class MainActivity : ComponentActivity() {
             startButton.isEnabled = !isServiceRunning
             stopButton.isEnabled = isServiceRunning
             roomCodeEditText.isEnabled = !isServiceRunning
-            saveCodeButton.isEnabled = !isServiceRunning
+            saveCodeButton.isEnabled = !isServiceRunning &&
+                    binding.roomCodeEditText.text.toString().replace("-", "").length == 16
             generateCodeButton.isEnabled = !isServiceRunning
+            deleteRoomButton.isEnabled = !isServiceRunning
 
             startButton.setBackgroundColor(
                 ContextCompat.getColor(
@@ -376,6 +351,5 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val PREFS_NAME = "WebRTCPrefs"
         private const val ROOM_LIST_KEY = "room_list"
-        private const val DEFAULT_ROOM_NAME = "room1"
     }
 }
