@@ -1,95 +1,122 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
+    android:padding="24dp"
+    android:background="?attr/colorSurface"
     tools:context=".MainActivity">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Название комнаты:"
-        android:textSize="18sp"
-        android:layout_marginBottom="8dp"/>
-
-    <EditText
-        android:id="@+id/roomCodeEditText"
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/roomCodeInputLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="XXXX-XXXX-XXXX-XXXX"
-        android:inputType="textCapCharacters"
-        android:maxLines="1"
-        android:maxLength="19"/>
+        android:hint="Room name"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+        app:startIconDrawable="@drawable/ic_room"
+        app:boxBackgroundColor="?attr/colorSurface">
 
-    <Button
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/roomCodeEditText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="XXXX-XXXX-XXXX-XXXX"
+            android:inputType="textCapCharacters"
+            android:maxLines="1"
+            android:maxLength="19"
+            android:focusableInTouchMode="true"/>
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/saveCodeButton"
+        style="@style/Widget.Material3.Button.OutlinedButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Сохранить имя комнаты"
+        android:text="Save room"
         android:layout_marginTop="8dp"
         android:layout_marginBottom="16dp"/>
 
-    <LinearLayout
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="16dp">
+        android:layout_marginBottom="16dp"
+        app:cardBackgroundColor="?attr/colorSurfaceVariant"
+        app:strokeColor="?attr/colorOutline"
+        app:strokeWidth="1dp">
 
-        <Button
-            android:id="@+id/generateCodeButton"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Сгенерировать"
-            android:layout_marginEnd="4dp"/>
+            android:orientation="horizontal"
+            android:padding="8dp">
 
-        <Button
-            android:id="@+id/copyCodeButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Копировать"
-            android:layout_marginStart="4dp"
-            android:layout_marginEnd="4dp"/>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/generateCodeButton"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Generate"/>
 
-        <Button
-            android:id="@+id/shareCodeButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Поделиться"
-            android:layout_marginStart="4dp"/>
-    </LinearLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/copyCodeButton"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Copy"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/shareCodeButton"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Share"/>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Сохраненные комнаты:"
-        android:textSize="16sp"
+        android:text="Saved rooms:"
+        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
         android:layout_marginBottom="8dp"/>
 
-    <ListView
-        android:id="@+id/roomListView"
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:choiceMode="singleChoice"/>
+        app:cardBackgroundColor="?attr/colorSurfaceVariant">
 
-    <Button
+        <ListView
+            android:id="@+id/roomListView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="@null"
+            android:dividerHeight="8dp"
+            android:padding="8dp"/>
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/startButton"
+        style="@style/Widget.Material3.Button"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Запустить service"
+        android:text="Start service"
         android:layout_marginTop="16dp"
-        android:backgroundTint="@color/green"/>
+        app:icon="@drawable/ic_play"
+        app:iconTint="@color/white"/>
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/stopButton"
+        style="@style/Widget.Material3.Button.TonalButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Остановить service"
+        android:text="Stop service"
         android:layout_marginTop="8dp"
-        android:backgroundTint="@color/red"/>
+        app:icon="@drawable/ic_stop"
+        app:iconTint="?attr/colorOnSecondaryContainer"/>
 </LinearLayout>

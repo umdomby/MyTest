@@ -1,6 +1,5 @@
-
+// MainActivity.kt
 package com.example.mytest
-
 
 import android.Manifest
 import android.app.AlertDialog
@@ -18,12 +17,15 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.view.View
+import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.mytest.databinding.ActivityMainBinding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONArray
 import java.util.*
 import kotlin.random.Random
@@ -31,7 +33,7 @@ import kotlin.random.Random
 class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var sharedPreferences: SharedPreferences
-    private var currentRoomName: String = DEFAULT_ROOM_NAME
+    private var currentRoomName: String = generateRandomRoomName()
     private var isServiceRunning: Boolean = false
     private val roomList = mutableListOf<String>()
     private lateinit var roomListAdapter: ArrayAdapter<String>
@@ -51,11 +53,11 @@ class MainActivity : ComponentActivity() {
                 mediaProjectionLauncher.launch(mediaManager.createScreenCaptureIntent())
                 checkBatteryOptimization()
             } else {
-                showToast("Требуется разрешение на использование камеры")
+                showToast("Camera permission required")
                 finish()
             }
         } else {
-            showToast("Не все разрешения предоставлены")
+            showToast("Not all permissions granted")
             finish()
         }
     }
@@ -66,13 +68,17 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK && result.data != null) {
             startWebRTCService(result.data!!)
         } else {
-            showToast("Доступ к записи экрана не предоставлен")
+            showToast("Screen recording access denied")
             finish()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Prevent keyboard from popping up automatically
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -92,9 +98,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (roomList.isEmpty()) {
-            roomList.add(DEFAULT_ROOM_NAME)
+            roomList.add(currentRoomName)
+            saveRoomList()
+        } else {
+            currentRoomName = roomList.first()
         }
-        currentRoomName = roomList.first()
     }
 
     private fun saveRoomList() {
@@ -108,7 +116,7 @@ class MainActivity : ComponentActivity() {
     private fun setupRoomListAdapter() {
         roomListAdapter = ArrayAdapter(
             this,
-            android.R.layout.simple_list_item_1,
+            com.google.android.material.R.layout.support_simple_spinner_dropdown_item,
             roomList
         )
         binding.roomListView.adapter = roomListAdapter
@@ -125,14 +133,14 @@ class MainActivity : ComponentActivity() {
 
     private fun showDeleteRoomDialog(position: Int) {
         if (roomList.size <= 1) {
-            showToast("Нельзя удалить последнюю комнату")
+            showToast("Cannot delete the last room")
             return
         }
 
-        AlertDialog.Builder(this)
-            .setTitle("Удаление комнаты")
-            .setMessage("Вы уверены, что хотите удалить комнату '${roomList[position]}'?")
-            .setPositiveButton("Удалить") { _, _ ->
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Delete Room")
+            .setMessage("Are you sure you want to delete room '${roomList[position]}'?")
+            .setPositiveButton("Delete") { _, _ ->
                 val removedRoom = roomList.removeAt(position)
                 saveRoomList()
                 roomListAdapter.notifyDataSetChanged()
@@ -142,14 +150,15 @@ class MainActivity : ComponentActivity() {
                     binding.roomCodeEditText.setText(currentRoomName)
                 }
 
-                showToast("Комната удалена")
+                showToast("Room deleted")
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
     private fun setupUI() {
         binding.roomCodeEditText.setText(currentRoomName)
+        binding.roomCodeEditText.clearFocus()
 
         binding.roomCodeEditText.addTextChangedListener(object : TextWatcher {
             private var isFormatting = false
@@ -183,7 +192,7 @@ class MainActivity : ComponentActivity() {
 
         binding.saveCodeButton.setOnClickListener {
             if (isServiceRunning) {
-                showToast("Сначала остановите сервис")
+                showToast("Stop the service first")
                 return@setOnClickListener
             }
 
@@ -194,24 +203,24 @@ class MainActivity : ComponentActivity() {
                     saveRoomList()
                     roomListAdapter.notifyDataSetChanged()
                     currentRoomName = newRoomName
-                    showToast("Комната сохранена: $newRoomName")
+                    showToast("Room saved: $newRoomName")
                 } else {
-                    showToast("Комната уже существует")
+                    showToast("Room already exists")
                 }
             } else {
-                showToast("Введите название комнаты")
+                showToast("Enter room name")
             }
         }
 
         binding.generateCodeButton.setOnClickListener {
             if (isServiceRunning) {
-                showToast("Сначала остановите сервис")
+                showToast("Stop the service first")
                 return@setOnClickListener
             }
 
             val randomRoomName = generateRandomRoomName()
             binding.roomCodeEditText.setText(randomRoomName)
-            showToast("Сгенерировано: $randomRoomName")
+            showToast("Generated: $randomRoomName")
         }
 
         binding.copyCodeButton.setOnClickListener {
@@ -219,28 +228,28 @@ class MainActivity : ComponentActivity() {
             val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Room name", roomName)
             clipboard.setPrimaryClip(clip)
-            showToast("Скопировано: $roomName")
+            showToast("Copied: $roomName")
         }
 
         binding.shareCodeButton.setOnClickListener {
             val roomName = binding.roomCodeEditText.text.toString()
             val shareIntent = Intent().apply {
                 action = Intent.ACTION_SEND
-                putExtra(Intent.EXTRA_TEXT, "Присоединяйтесь к моей комнате: $roomName")
+                putExtra(Intent.EXTRA_TEXT, "Join my room: $roomName")
                 type = "text/plain"
             }
-            startActivity(Intent.createChooser(shareIntent, "Поделиться комнатой"))
+            startActivity(Intent.createChooser(shareIntent, "Share Room"))
         }
 
         binding.startButton.setOnClickListener {
             if (isServiceRunning) {
-                showToast("Сервис уже запущен")
+                showToast("Service already running")
                 return@setOnClickListener
             }
 
             currentRoomName = binding.roomCodeEditText.text.toString().trim()
             if (currentRoomName.isEmpty()) {
-                showToast("Введите название комнаты")
+                showToast("Enter room name")
                 return@setOnClickListener
             }
 
@@ -255,7 +264,7 @@ class MainActivity : ComponentActivity() {
 
         binding.stopButton.setOnClickListener {
             if (!isServiceRunning) {
-                showToast("Сервис не запущен")
+                showToast("Service not running")
                 return@setOnClickListener
             }
             stopWebRTCService()
