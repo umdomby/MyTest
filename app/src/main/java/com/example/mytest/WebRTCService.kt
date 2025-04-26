@@ -31,7 +31,7 @@ class WebRTCService : Service() {
 
     private lateinit var remoteView: SurfaceViewRenderer
 
-    private var roomName: String = "room1"
+    private val roomName = "room1"
     private val userName = Build.MODEL ?: "AndroidDevice"
     private val webSocketUrl = "wss://ardua.site/ws"
 
@@ -545,23 +545,14 @@ class WebRTCService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        intent?.let {
-            // Получаем имя комнаты из интента
-            roomName = intent.getStringExtra("roomName") ?: "room1"
-
-            when (intent.action) {
+        intent?.action?.let {
+            when (it) {
                 "RECONNECT" -> reconnect()
                 "STOP" -> stopSelf()
-                else -> {
-                    // Если это обычный запуск, инициализируем соединение
-                    if (!isInitialized()) {
-                        initializeWebRTC()
-                        connectWebSocket()
-                    }
-                }
             }
         }
 
+        // Перезапускаем сервис, если он будет убит системой
         return START_REDELIVER_INTENT
     }
 
