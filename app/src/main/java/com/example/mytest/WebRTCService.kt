@@ -29,6 +29,9 @@ class WebRTCService : Service() {
             internal set
     }
 
+    private var isConnected = false // Флаг подключения
+    private var isConnecting = false // Флаг процесса подключения
+
     private var shouldStop = false
     private var isUserStopped = false
 
@@ -62,6 +65,42 @@ class WebRTCService : Service() {
             if (!isInitialized() || !webSocketClient.isConnected()) {
                 reconnect()
             }
+        }
+    }
+
+    private val webSocketListener = object : WebSocketListener() {
+        override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+            try {
+                val message = JSONObject(text)
+                handleWebSocketMessage(message)
+            } catch (e: Exception) {
+                Log.e("WebRTCService", "WebSocket message parse error", e)
+            }
+        }
+
+        override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+            Log.d("WebRTCService", "WebSocket connected for room: $roomName")
+            isConnected = true
+            isConnecting = false
+            reconnectAttempts = 0 // Сбрасываем счетчик попыток
+            updateNotification("Connected to server")
+            joinRoom()
+        }
+
+        override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+            Log.d("WebRTCService", "WebSocket disconnected, code: $code, reason: $reason")
+            isConnected = false
+            if (code != 1000) { // Если это не нормальное закрытие
+                scheduleReconnect()
+            }
+        }
+
+        override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+            Log.e("WebRTCService", "WebSocket error: ${t.message}")
+            isConnected = false
+            isConnecting = false
+            updateNotification("Error: ${t.message?.take(30)}...")
+            scheduleReconnect()
         }
     }
 
@@ -250,74 +289,66 @@ class WebRTCService : Service() {
     }
 
     private fun connectWebSocket() {
-        webSocketClient = WebSocketClient(object : WebSocketListener() {
-            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
-                try {
-                    val message = JSONObject(text)
-                    handleWebSocketMessage(message)
-                } catch (e: Exception) {
-                    Log.e("WebRTCService", "WebSocket message parse error", e)
-                }
-            }
+        if (isConnected || isConnecting) {
+            Log.d("WebRTCService", "Already connected or connecting, skipping")
+            return
+        }
 
-            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                Log.d("WebRTCService", "WebSocket connected for room: $roomName")
-                updateNotification("Connected to server")
-                joinRoom()
-            }
-
-            override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
-                Log.d("WebRTCService", "WebSocket disconnected")
-                updateNotification("Disconnected from server")
-                scheduleReconnect()
-            }
-
-            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
-                Log.e("WebRTCService", "WebSocket error: ${t.message}")
-                updateNotification("Error: ${t.message?.take(30)}...")
-                scheduleReconnect()
-            }
-        })
-
+        isConnecting = true
+        webSocketClient = WebSocketClient(webSocketListener)
         webSocketClient.connect(webSocketUrl)
     }
 
     private fun scheduleReconnect() {
+        if (isUserStopped) {
+            Log.d("WebRTCService", "Service stopped by user, not reconnecting")
+            return
+        }
+
         handler.removeCallbacksAndMessages(null)
 
         reconnectAttempts++
         val delay = when {
-            reconnectAttempts < 5 -> 5000L // 5 секунд для первых 5 попыток
-            reconnectAttempts < 10 -> 15000L // 15 секунд для следующих 5
-            else -> 60000L // 1 минута для остальных
+            reconnectAttempts < 5 -> 5000L
+            reconnectAttempts < 10 -> 15000L
+            else -> 60000L
         }
 
+        Log.d("WebRTCService", "Scheduling reconnect in ${delay/1000} seconds (attempt $reconnectAttempts)")
+        updateNotification("Reconnecting in ${delay/1000}s...")
+
         handler.postDelayed({
-            Log.d("WebRTCService", "Reconnect attempt $reconnectAttempts for room: $roomName")
-            updateNotification("Reconnecting (attempt $reconnectAttempts)...")
-            reconnect()
+            if (!isConnected && !isConnecting) {
+                Log.d("WebRTCService", "Executing reconnect attempt $reconnectAttempts")
+                reconnect()
+            } else {
+                Log.d("WebRTCService", "Already connected or connecting, skipping scheduled reconnect")
+            }
         }, delay)
     }
 
     fun reconnect() {
+        if (isConnected || isConnecting) {
+            Log.d("WebRTCService", "Already connected or connecting, skipping manual reconnect")
+            return
+        }
+
         handler.post {
             try {
-                Log.d("WebRTCService", "Starting reconnect process for room: $roomName")
+                Log.d("WebRTCService", "Starting reconnect process")
 
                 // Очищаем предыдущие соединения
                 if (::webSocketClient.isInitialized) {
                     webSocketClient.disconnect()
                 }
 
-                cleanupWebRTCResources()
-
-                // Инициализируем заново с текущим именем комнаты
+                // Инициализируем заново
                 initializeWebRTC()
                 connectWebSocket()
 
-                reconnectAttempts = 0 // Сбрасываем счетчик попыток после успешного переподключения
             } catch (e: Exception) {
                 Log.e("WebRTCService", "Reconnection error", e)
+                isConnecting = false
                 scheduleReconnect()
             }
         }
@@ -566,30 +597,40 @@ class WebRTCService : Service() {
         when (intent?.action) {
             "STOP" -> {
                 isUserStopped = true
+                isConnected = false
+                isConnecting = false
                 stopEverything()
                 return START_NOT_STICKY
             }
             else -> {
                 isUserStopped = false
-                // Обновляем имя комнаты из интента
                 intent?.getStringExtra("roomName")?.let {
                     roomName = it
                     currentRoomName = it
                 }
+
                 Log.d("WebRTCService", "Starting service with room: $roomName")
 
-                initializeWebRTC()
-                connectWebSocket()
+                // Если уже подключены, не делаем ничего
+                if (!isConnected && !isConnecting) {
+                    initializeWebRTC()
+                    connectWebSocket()
+                }
+
                 isRunning = true
                 return START_STICKY
             }
         }
     }
+
     private fun stopEverything() {
         isRunning = false
+        isConnected = false
+        isConnecting = false
 
         try {
-            handler.removeCallbacks(healthCheckRunnable)
+            handler.removeCallbacksAndMessages(null)
+            unregisterReceiver(connectivityReceiver)
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             cm?.unregisterNetworkCallback(networkCallback)
         } catch (e: Exception) {
@@ -600,7 +641,6 @@ class WebRTCService : Service() {
 
         if (isUserStopped) {
             stopSelf()
-            // Полное завершение процесса
             android.os.Process.killProcess(android.os.Process.myPid())
         }
     }
