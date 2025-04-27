@@ -369,11 +369,38 @@ class WebRTCService : Service() {
         }
     }
 
+    private fun handleBandwidthEstimation(estimation: Long) {
+        handler.post {
+            try {
+                // Адаптируем качество видео в зависимости от доступной полосы
+                val width = when {
+                    estimation > 1500000 -> 1280 // 1.5 Mbps+
+                    estimation > 500000 -> 854  // 0.5-1.5 Mbps
+                    else -> 640                // <0.5 Mbps
+                }
+
+                val height = (width * 9 / 16)
+
+                webRTCClient.videoCapturer?.let { capturer ->
+                    capturer.stopCapture()
+                    capturer.startCapture(width, height, 24)
+                    Log.d("WebRTCService", "Adjusted video to ${width}x${height} @24fps")
+                }
+            } catch (e: Exception) {
+                Log.e("WebRTCService", "Error adjusting video quality", e)
+            }
+        }
+    }
+
     private fun handleWebSocketMessage(message: JSONObject) {
         Log.d("WebRTCService", "Received: $message")
 
         try {
             when (message.optString("type")) {
+                "bandwidth_estimation" -> {
+                    val estimation = message.optLong("estimation", 1000000)
+                    handleBandwidthEstimation(estimation)
+                }
                 "offer" -> handleOffer(message)
                 "answer" -> handleAnswer(message)
                 "ice_candidate" -> handleIceCandidate(message)

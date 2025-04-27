@@ -1,6 +1,7 @@
 package com.example.mytest
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import org.webrtc.*
 
@@ -15,7 +16,7 @@ class WebRTCClient(
     var peerConnection: PeerConnection
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
-    private var videoCapturer: VideoCapturer? = null
+    internal var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     init {
@@ -42,6 +43,10 @@ class WebRTCClient(
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(videoEncoderFactory)
             .setVideoDecoderFactory(videoDecoderFactory)
+            .setOptions(PeerConnectionFactory.Options().apply {
+                disableEncryption = false
+                disableNetworkMonitor = false
+            })
             .createPeerConnectionFactory()
     }
 
@@ -77,6 +82,16 @@ class WebRTCClient(
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
             keyType = PeerConnection.KeyType.ECDSA
+
+            // Оптимизация для мобильных
+            if (Build.MODEL.contains("iPhone")) {
+                audioJitterBufferMaxPackets = 50
+                audioJitterBufferFastAccelerate = true
+            } else {
+                // Настройки для Android
+                audioJitterBufferMaxPackets = 200
+                iceConnectionReceivingTimeout = 5000
+            }
         }
 
         return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
