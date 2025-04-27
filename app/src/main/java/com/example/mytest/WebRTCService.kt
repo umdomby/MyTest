@@ -25,7 +25,7 @@ class WebRTCService : Service() {
     companion object {
         var isRunning = false
             private set
-        var currentRoomName = "room1"
+        var currentRoomName = ""
             internal set
     }
 
@@ -604,14 +604,11 @@ class WebRTCService : Service() {
             }
             else -> {
                 isUserStopped = false
-                intent?.getStringExtra("roomName")?.let {
-                    roomName = it
-                    currentRoomName = it
-                }
+                // Используем сохраненное имя комнаты из MainActivity
+                roomName = currentRoomName
 
                 Log.d("WebRTCService", "Starting service with room: $roomName")
 
-                // Если уже подключены, не делаем ничего
                 if (!isConnected && !isConnecting) {
                     initializeWebRTC()
                     connectWebSocket()

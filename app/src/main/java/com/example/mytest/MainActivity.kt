@@ -1,4 +1,3 @@
-// file: src/main/java/com/example/mytest/MainActivity.kt
 package com.example.mytest
 
 import android.Manifest
@@ -67,6 +66,8 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
+            // Сохраняем текущее имя комнаты при успешном запуске сервиса
+            saveCurrentRoom()
             startWebRTCService(result.data!!)
         } else {
             showToast("Screen recording access denied")
@@ -102,14 +103,24 @@ class MainActivity : ComponentActivity() {
         currentRoomName = sharedPreferences.getString(LAST_USED_ROOM_KEY, "") ?: ""
 
         // Если нет сохраненных комнат или последнее имя пустое, генерируем новое
-        if (roomList.isEmpty() || currentRoomName.isEmpty()) {
+        if (roomList.isEmpty()) {
             currentRoomName = generateRandomRoomName()
             roomList.add(currentRoomName)
             saveRoomList()
+            saveCurrentRoom()
+        } else if (currentRoomName.isEmpty()) {
+            currentRoomName = roomList.first()
+            saveCurrentRoom()
         }
 
         // Устанавливаем последнее использованное имя в поле ввода
         binding.roomCodeEditText.setText(formatRoomName(currentRoomName))
+    }
+
+    private fun saveCurrentRoom() {
+        sharedPreferences.edit()
+            .putString(LAST_USED_ROOM_KEY, currentRoomName)
+            .apply()
     }
 
     private fun saveRoomList() {
@@ -117,7 +128,6 @@ class MainActivity : ComponentActivity() {
         roomList.forEach { jsonArray.put(it) }
         sharedPreferences.edit()
             .putString(ROOM_LIST_KEY, jsonArray.toString())
-            .putString(LAST_USED_ROOM_KEY, currentRoomName)
             .apply()
     }
 
@@ -136,7 +146,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupUI() {
-        // Обработчик ввода с автоматической вставкой тире
         binding.roomCodeEditText.addTextChangedListener(object : TextWatcher {
             private var isFormatting = false
             private var deletingHyphen = false
@@ -145,7 +154,6 @@ class MainActivity : ComponentActivity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
                 if (isFormatting) return
 
-                // Проверяем, удаляется ли тире
                 if (count == 1 && after == 0 && hyphenPositions.contains(start)) {
                     deletingHyphen = true
                 } else {
@@ -172,7 +180,6 @@ class MainActivity : ComponentActivity() {
                         formatted.append(text[i])
                     }
 
-                    // Если удаляли тире, корректируем позицию курсора
                     val cursorPos = binding.roomCodeEditText.selectionStart
                     if (deletingHyphen && cursorPos > 0 && cursorPos < formatted.length &&
                         formatted[cursorPos] == '-') {
@@ -184,7 +191,6 @@ class MainActivity : ComponentActivity() {
 
                 isFormatting = false
 
-                // Проверяем валидность имени для активации кнопки Save
                 val cleanName = binding.roomCodeEditText.text.toString().replace("-", "")
                 binding.saveCodeButton.isEnabled = cleanName.length == 16 &&
                         !roomList.contains(cleanName)
@@ -213,6 +219,7 @@ class MainActivity : ComponentActivity() {
                     roomList.add(0, newRoomName)
                     currentRoomName = newRoomName
                     saveRoomList()
+                    saveCurrentRoom()
                     roomListAdapter.notifyDataSetChanged()
                     showToast("Room saved: ${formatRoomName(newRoomName)}")
                 } else {
@@ -221,7 +228,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Остальные кнопки без изменений
         binding.copyCodeButton.setOnClickListener {
             val roomName = binding.roomCodeEditText.text.toString()
             val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
@@ -270,7 +276,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Форматирование имени комнаты с тире
     private fun formatRoomName(name: String): String {
         if (name.length != 16) return name
 
@@ -299,9 +304,11 @@ class MainActivity : ComponentActivity() {
                 if (currentRoomName == roomName) {
                     currentRoomName = roomList.first()
                     binding.roomCodeEditText.setText(formatRoomName(currentRoomName))
+                    saveCurrentRoom()
                 }
 
                 showToast("Room deleted")
+                updateButtonStates()
             }
             .setNegativeButton(getString(R.string.cancel_button), null)
             .show()
@@ -362,7 +369,8 @@ class MainActivity : ComponentActivity() {
                     !roomList.contains(binding.roomCodeEditText.text.toString().replace("-", ""))
             generateCodeButton.isEnabled = !isServiceRunning
             deleteRoomButton.isEnabled = !isServiceRunning &&
-                    roomList.contains(binding.roomCodeEditText.text.toString().replace("-", ""))
+                    roomList.contains(binding.roomCodeEditText.text.toString().replace("-", "")) &&
+                    roomList.size > 1 // Кнопка неактивна, если только одна комната
 
             startButton.setBackgroundColor(
                 ContextCompat.getColor(
