@@ -327,7 +327,7 @@ class WebRTCService : Service() {
         }, delay)
     }
 
-    fun reconnect() {
+    private fun reconnect() {
         if (isConnected || isConnecting) {
             Log.d("WebRTCService", "Already connected or connecting, skipping manual reconnect")
             return
@@ -336,6 +336,21 @@ class WebRTCService : Service() {
         handler.post {
             try {
                 Log.d("WebRTCService", "Starting reconnect process")
+
+                // Получаем последнее сохраненное имя комнаты
+                val sharedPrefs = getSharedPreferences("WebRTCPrefs", Context.MODE_PRIVATE)
+                val lastRoomName = sharedPrefs.getString("last_used_room", "")
+
+                // Если имя комнаты пустое, используем дефолтное значение
+                roomName = if (lastRoomName.isNullOrEmpty()) {
+                    "default_room_${System.currentTimeMillis()}"
+                } else {
+                    lastRoomName
+                }
+
+                // Обновляем текущее имя комнаты
+                currentRoomName = roomName
+                Log.d("WebRTCService", "Reconnecting to room: $roomName")
 
                 // Очищаем предыдущие соединения
                 if (::webSocketClient.isInitialized) {
@@ -631,8 +646,18 @@ class WebRTCService : Service() {
             }
             else -> {
                 isUserStopped = false
-                // Используем сохраненное имя комнаты из MainActivity
-                roomName = currentRoomName
+
+                // Получаем последнее сохраненное имя комнаты
+                val sharedPrefs = getSharedPreferences("WebRTCPrefs", Context.MODE_PRIVATE)
+                val lastRoomName = sharedPrefs.getString("last_used_room", "")
+
+                roomName = if (lastRoomName.isNullOrEmpty()) {
+                    "default_room_${System.currentTimeMillis()}"
+                } else {
+                    lastRoomName
+                }
+
+                currentRoomName = roomName
 
                 Log.d("WebRTCService", "Starting service with room: $roomName")
 

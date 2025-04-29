@@ -328,6 +328,10 @@ class MainActivity : ComponentActivity() {
 
     private fun startWebRTCService(resultData: Intent) {
         try {
+            // Сохраняем текущее имя комнаты перед запуском сервиса
+            currentRoomName = binding.roomCodeEditText.text.toString().replace("-", "")
+            saveCurrentRoom()
+
             WebRTCService.currentRoomName = currentRoomName
             val serviceIntent = Intent(this, WebRTCService::class.java).apply {
                 putExtra("resultCode", RESULT_OK)
