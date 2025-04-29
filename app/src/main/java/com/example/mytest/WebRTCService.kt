@@ -1,6 +1,7 @@
 // file: src/main/java/com/example/mytest/WebRTCService.kt
 package com.example.mytest
 
+import android.annotation.SuppressLint
 import android.app.*
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -19,6 +20,9 @@ import org.webrtc.*
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 import android.net.NetworkRequest
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 
 class WebRTCService : Service() {
 
@@ -26,7 +30,24 @@ class WebRTCService : Service() {
         var isRunning = false
             private set
         var currentRoomName = ""
-            internal set
+        const val ACTION_SERVICE_STATE = "com.example.mytest.SERVICE_STATE"
+        const val EXTRA_IS_RUNNING = "is_running"
+    }
+
+    private val stateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == ACTION_SERVICE_STATE) {
+                val isRunning = intent.getBooleanExtra(EXTRA_IS_RUNNING, false)
+                // Можно обновить UI активности, если она видима
+            }
+        }
+    }
+
+    private fun sendServiceStateUpdate() {
+        val intent = Intent(ACTION_SERVICE_STATE).apply {
+            putExtra(EXTRA_IS_RUNNING, isRunning)
+        }
+        sendBroadcast(intent)
     }
 
     private var isConnected = false // Флаг подключения
@@ -53,6 +74,9 @@ class WebRTCService : Service() {
     private val notificationId = 1
     private val channelId = "webrtc_service_channel"
     private val handler = Handler(Looper.getMainLooper())
+
+    private var isStateReceiverRegistered = false
+    private var isConnectivityReceiverRegistered = false
 
     inner class LocalBinder : Binder() {
         fun getService(): WebRTCService = this@WebRTCService
@@ -125,6 +149,7 @@ class WebRTCService : Service() {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         isRunning = true
@@ -150,9 +175,12 @@ class WebRTCService : Service() {
         )
 
         Log.d("WebRTCService", "Service created with room: $roomName")
-
+        sendServiceStateUpdate()
         try {
             registerReceiver(connectivityReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
+            isConnectivityReceiverRegistered = true
+            registerReceiver(stateReceiver, IntentFilter(ACTION_SERVICE_STATE))
+            isStateReceiverRegistered = true
             createNotificationChannel()
             startForegroundService()
             initializeWebRTC()
@@ -621,6 +649,12 @@ class WebRTCService : Service() {
 
     override fun onDestroy() {
         if (!isUserStopped) {
+            if (isConnectivityReceiverRegistered) {
+                unregisterReceiver(connectivityReceiver)
+            }
+            if (isStateReceiverRegistered) {
+                unregisterReceiver(stateReceiver)
+            }
             // Автоматический перезапуск только если не было явной остановки
             scheduleRestartWithWorkManager()
         }
@@ -695,10 +729,21 @@ class WebRTCService : Service() {
     }
 
     private fun scheduleRestartWithWorkManager() {
+        // Убедитесь, что используете ApplicationContext
         val workRequest = OneTimeWorkRequestBuilder<WebRTCWorker>()
             .setInitialDelay(1, TimeUnit.MINUTES)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED) // Только при наличии сети
+                    .build()
+            )
             .build()
-        WorkManager.getInstance(applicationContext).enqueue(workRequest)
+
+        WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+            "WebRTCServiceRestart",
+            ExistingWorkPolicy.REPLACE,
+            workRequest
+        )
     }
 
     fun isInitialized(): Boolean {

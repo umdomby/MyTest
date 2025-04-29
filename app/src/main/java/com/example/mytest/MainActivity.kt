@@ -1,10 +1,14 @@
 package com.example.mytest
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -86,6 +90,9 @@ class MainActivity : ComponentActivity() {
         loadRoomList()
         setupUI()
         setupRoomListAdapter()
+
+        // Проверяем состояние сервиса при создании активности
+        isServiceRunning = WebRTCService.isRunning
         updateButtonStates()
     }
 
@@ -365,8 +372,12 @@ class MainActivity : ComponentActivity() {
 
     private fun updateButtonStates() {
         binding.apply {
+            // START активен только если сервис не работает
             startButton.isEnabled = !isServiceRunning
+
+            // STOP активен только если сервис работает
             stopButton.isEnabled = isServiceRunning
+
             roomCodeEditText.isEnabled = !isServiceRunning
             saveCodeButton.isEnabled = !isServiceRunning &&
                     binding.roomCodeEditText.text.toString().replace("-", "").length == 16 &&
@@ -374,7 +385,7 @@ class MainActivity : ComponentActivity() {
             generateCodeButton.isEnabled = !isServiceRunning
             deleteRoomButton.isEnabled = !isServiceRunning &&
                     roomList.contains(binding.roomCodeEditText.text.toString().replace("-", "")) &&
-                    roomList.size > 1 // Кнопка неактивна, если только одна комната
+                    roomList.size > 1
 
             startButton.setBackgroundColor(
                 ContextCompat.getColor(
@@ -388,6 +399,15 @@ class MainActivity : ComponentActivity() {
                     if (isServiceRunning) R.color.red else android.R.color.darker_gray
                 )
             )
+        }
+    }
+
+    private val serviceStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == WebRTCService.ACTION_SERVICE_STATE) {
+                isServiceRunning = intent.getBooleanExtra(WebRTCService.EXTRA_IS_RUNNING, false)
+                updateButtonStates()
+            }
         }
     }
 
@@ -416,6 +436,20 @@ class MainActivity : ComponentActivity() {
 
     private fun showToast(text: String) {
         Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    override fun onResume() {
+        super.onResume()
+        registerReceiver(serviceStateReceiver, IntentFilter(WebRTCService.ACTION_SERVICE_STATE))
+        // Обновляем состояние при возвращении в активность
+        isServiceRunning = WebRTCService.isRunning
+        updateButtonStates()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        unregisterReceiver(serviceStateReceiver)
     }
 
     companion object {
