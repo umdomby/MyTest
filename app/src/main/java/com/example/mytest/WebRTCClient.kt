@@ -58,21 +58,23 @@ class WebRTCClient(
                 .setPassword("pass1")
                 .createIceServer(),
 
-            PeerConnection.IceServer.builder("turns:ardua.site:5349")
-                .setUsername("user1")
-                .setPassword("pass1")
-                .createIceServer(),
+            PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
 
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19301").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19303").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19304").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19305").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19301").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19303").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19304").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19305").createIceServer()
+//            PeerConnection.IceServer.builder("turns:ardua.site:5349")
+//                .setUsername("user1")
+//                .setPassword("pass1")
+//                .createIceServer(),
+
+//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19301").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19303").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19304").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19305").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19301").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19303").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19304").createIceServer(),
+//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19305").createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
