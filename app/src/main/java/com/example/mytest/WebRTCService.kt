@@ -149,6 +149,60 @@ class WebRTCService : Service() {
         }
     }
 
+    // Добавляем в класс WebRTCService
+    private val bandwidthEstimationRunnable = object : Runnable {
+        override fun run() {
+            if (isConnected) {
+                adjustVideoQualityBasedOnStats()
+            }
+            handler.postDelayed(this, 10000) // Каждые 10 секунд
+        }
+    }
+
+    private fun adjustVideoQualityBasedOnStats() {
+        webRTCClient.peerConnection.getStats { statsReport ->
+            try {
+                var videoPacketsLost = 0L
+                var videoPacketsSent = 0L
+
+                // Получаем статистику для исходящего видео
+                statsReport.statsMap.values.forEach { stats ->
+                    if (stats.type == "outbound-rtp" && stats.id.contains("video")) {
+                        // Получаем значения как Long
+                        videoPacketsLost += stats.members["packetsLost"] as? Long ?: 0L
+                        videoPacketsSent += stats.members["packetsSent"] as? Long ?: 1L
+                    }
+                }
+
+                if (videoPacketsSent > 0) {
+                    val lossRate = videoPacketsLost.toDouble() / videoPacketsSent.toDouble()
+                    handler.post {
+                        when {
+                            lossRate > 0.1 -> reduceVideoQuality() // >10% потерь
+                            lossRate < 0.05 -> increaseVideoQuality() // <5% потерь
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("WebRTCService", "Error processing stats", e)
+            }
+        }
+    }
+
+    private fun reduceVideoQuality() {
+        webRTCClient.videoCapturer?.let { capturer ->
+            capturer.changeCaptureFormat(640, 480, 15) // Уменьшаем разрешение и FPS
+            Log.d("WebRTCService", "Reduced video quality to 640x480@15fps")
+        }
+    }
+
+    private fun increaseVideoQuality() {
+        webRTCClient.videoCapturer?.let { capturer ->
+            capturer.changeCaptureFormat(1280, 720, 30) // Увеличиваем разрешение и FPS
+            Log.d("WebRTCService", "Increased video quality to 1280x720@30fps")
+        }
+    }
+
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
@@ -176,6 +230,7 @@ class WebRTCService : Service() {
 
         Log.d("WebRTCService", "Service created with room: $roomName")
         sendServiceStateUpdate()
+        handler.post(bandwidthEstimationRunnable)
         try {
             registerReceiver(connectivityReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
             isConnectivityReceiverRegistered = true
