@@ -440,6 +440,12 @@ class WebRTCService : Service() {
 
         try {
             when (message.optString("type")) {
+                "create_offer_for_new_follower" -> {
+                    Log.d("WebRTCService", "Received request to create offer for new follower")
+                    handler.post {
+                        createOffer() // Создаем оффер по запросу сервера
+                    }
+                }
                 "bandwidth_estimation" -> {
                     val estimation = message.optLong("estimation", 1000000)
                     handleBandwidthEstimation(estimation)
@@ -462,6 +468,38 @@ class WebRTCService : Service() {
             }
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling message", e)
+        }
+    }
+
+    private fun createOffer() {
+        try {
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            }
+
+            webRTCClient.peerConnection.createOffer(object : SdpObserver {
+                override fun onCreateSuccess(desc: SessionDescription) {
+                    Log.d("WebRTCService", "Created offer: ${desc.description}")
+                    webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
+                        override fun onSetSuccess() {
+                            sendSessionDescription(desc) // Отправляем оффер через WebSocket
+                        }
+                        override fun onSetFailure(error: String) {
+                            Log.e("WebRTCService", "Error setting local description: $error")
+                        }
+                        override fun onCreateSuccess(p0: SessionDescription?) {}
+                        override fun onCreateFailure(error: String) {}
+                    }, desc)
+                }
+                override fun onCreateFailure(error: String) {
+                    Log.e("WebRTCService", "Error creating offer: $error")
+                }
+                override fun onSetSuccess() {}
+                override fun onSetFailure(error: String) {}
+            }, constraints)
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error creating offer", e)
         }
     }
 
@@ -565,10 +603,12 @@ class WebRTCService : Service() {
 
             webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
-                    Log.d("WebRTCService", "Answer accepted")
+                    Log.d("WebRTCService", "Answer accepted, connection should be established")
                 }
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Error setting answer: $error")
+                    // При ошибке запрашиваем новый оффер
+                    handler.postDelayed({ createOffer() }, 2000)
                 }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
