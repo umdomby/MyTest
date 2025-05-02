@@ -300,19 +300,22 @@ class WebRTCService : Service() {
     }
 
     private fun initializeWebRTC() {
-        Log.d("WebRTCService", "Initializing WebRTC for room: $roomName")
+        Log.d("WebRTCService", "Initializing new WebRTC connection")
+
+        // 1. Полная очистка предыдущих ресурсов
         cleanupWebRTCResources()
 
+        // 2. Создание нового EglBase
         eglBase = EglBase.create()
+
+        // 3. Инициализация нового клиента WebRTC
         val localView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setMirror(true)
-            setEnableHardwareScaler(true)
         }
 
         remoteView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
-            setEnableHardwareScaler(true)
         }
 
         webRTCClient = WebRTCClient(
@@ -322,6 +325,9 @@ class WebRTCService : Service() {
             remoteView = remoteView,
             observer = createPeerConnectionObserver()
         )
+
+        // 4. Установка начального битрейта
+        webRTCClient.setVideoEncoderBitrate(300000, 400000, 500000)
     }
 
     private fun createPeerConnectionObserver() = object : PeerConnection.Observer {
@@ -382,6 +388,14 @@ class WebRTCService : Service() {
             if (::eglBase.isInitialized) {
                 eglBase.release()
             }
+
+            // Очищаем remoteView если нужно
+            if (::remoteView.isInitialized) {
+                remoteView.clearImage()
+                remoteView.release()
+            }
+
+            Log.d("WebRTCService", "WebRTC resources cleaned up")
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error cleaning WebRTC resources", e)
         }
@@ -511,6 +525,19 @@ class WebRTCService : Service() {
 
         try {
             when (message.optString("type")) {
+                "rejoin_and_offer" -> {
+                    Log.d("WebRTCService", "Received rejoin command from server")
+                    handler.post {
+                        // 1. Очищаем текущее соединение
+                        cleanupWebRTCResources()
+
+                        // 2. Инициализируем новое соединение
+                        initializeWebRTC()
+
+                        // 3. Создаем новый оффер
+                        createOffer()
+                    }
+                }
                 "create_offer_for_new_follower" -> {
                     Log.d("WebRTCService", "Received request to create offer for new follower")
                     handler.post {
@@ -542,43 +569,60 @@ class WebRTCService : Service() {
         }
     }
 
+    // Модифицируем createOffer для принудительного создания нового оффера
     private fun createOffer() {
         try {
+            // Убедимся, что у нас есть активное соединение
+            if (!::webRTCClient.isInitialized || !isConnected) {
+                Log.w("WebRTCService", "Cannot create offer - not initialized or connected")
+                return
+            }
+
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-                // Принудительно указываем H264
+                // Оптимизации для Huawei и других устройств
                 mandatory.add(MediaConstraints.KeyValuePair("googCodecPreferences", "{\"video\":[\"H264\"]}"))
+                mandatory.add(MediaConstraints.KeyValuePair("googCpuOveruseDetection", "true"))
             }
 
             webRTCClient.peerConnection.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
-                    // Модифицируем SDP для H264
-                    val modifiedSdp = desc.description.replace(
-                        "a=fmtp:126",
-                        "a=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1"
-                    )
+                    // Модифицируем SDP для лучшей совместимости
+                    var modifiedSdp = desc.description
+                        .replace("a=fmtp:126", "a=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1")
+                        .replace("a=mid:video", "a=mid:video\r\nb=AS:500\r\n")
+
                     val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
 
                     webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
+                            Log.d("WebRTCService", "Successfully set local description")
                             sendSessionDescription(modifiedDesc)
                         }
                         override fun onSetFailure(error: String) {
                             Log.e("WebRTCService", "Error setting local description: $error")
+                            // Повторяем попытку через 2 секунды
+                            handler.postDelayed({ createOffer() }, 2000)
                         }
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(error: String) {}
                     }, modifiedDesc)
                 }
+
                 override fun onCreateFailure(error: String) {
                     Log.e("WebRTCService", "Error creating offer: $error")
+                    // Повторяем попытку через 2 секунды
+                    handler.postDelayed({ createOffer() }, 2000)
                 }
+
                 override fun onSetSuccess() {}
                 override fun onSetFailure(error: String) {}
             }, constraints)
         } catch (e: Exception) {
-            Log.e("WebRTCService", "Error creating offer", e)
+            Log.e("WebRTCService", "Error in createOffer", e)
+            // Повторяем попытку через 2 секунды
+            handler.postDelayed({ createOffer() }, 2000)
         }
     }
 
