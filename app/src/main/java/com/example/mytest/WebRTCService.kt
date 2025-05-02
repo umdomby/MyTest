@@ -164,13 +164,17 @@ class WebRTCService : Service() {
             try {
                 var videoPacketsLost = 0L
                 var videoPacketsSent = 0L
+                var availableSendBandwidth = 0L
 
-                // Получаем статистику для исходящего видео
                 statsReport.statsMap.values.forEach { stats ->
-                    if (stats.type == "outbound-rtp" && stats.id.contains("video")) {
-                        // Получаем значения как Long
-                        videoPacketsLost += stats.members["packetsLost"] as? Long ?: 0L
-                        videoPacketsSent += stats.members["packetsSent"] as? Long ?: 1L
+                    when {
+                        stats.type == "outbound-rtp" && stats.id.contains("video") -> {
+                            videoPacketsLost += stats.members["packetsLost"] as? Long ?: 0L
+                            videoPacketsSent += stats.members["packetsSent"] as? Long ?: 1L
+                        }
+                        stats.type == "candidate-pair" && stats.members["state"] == "succeeded" -> {
+                            availableSendBandwidth = stats.members["availableOutgoingBitrate"] as? Long ?: 0L
+                        }
                     }
                 }
 
@@ -179,7 +183,7 @@ class WebRTCService : Service() {
                     handler.post {
                         when {
                             lossRate > 0.1 -> reduceVideoQuality() // >10% потерь
-                            lossRate < 0.05 -> increaseVideoQuality() // <5% потерь
+                            lossRate < 0.05 && availableSendBandwidth > 700000 -> increaseVideoQuality() // <5% потерь и хорошая пропускная способность
                         }
                     }
                 }
@@ -190,16 +194,28 @@ class WebRTCService : Service() {
     }
 
     private fun reduceVideoQuality() {
-        webRTCClient.videoCapturer?.let { capturer ->
-            capturer.changeCaptureFormat(640, 480, 15) // Уменьшаем разрешение и FPS
-            Log.d("WebRTCService", "Reduced video quality to 640x480@15fps")
+        try {
+            webRTCClient.videoCapturer?.let { capturer ->
+                capturer.stopCapture()
+                capturer.startCapture(480, 360, 15)
+                webRTCClient.setVideoEncoderBitrate(150000, 200000, 300000)
+                Log.d("WebRTCService", "Reduced video quality to 480x360@15fps, 200kbps")
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error reducing video quality", e)
         }
     }
 
     private fun increaseVideoQuality() {
-        webRTCClient.videoCapturer?.let { capturer ->
-            capturer.changeCaptureFormat(1280, 720, 30) // Увеличиваем разрешение и FPS
-            Log.d("WebRTCService", "Increased video quality to 1280x720@30fps")
+        try {
+            webRTCClient.videoCapturer?.let { capturer ->
+                capturer.stopCapture()
+                capturer.startCapture(640, 480, 20)
+                webRTCClient.setVideoEncoderBitrate(300000, 400000, 500000)
+                Log.d("WebRTCService", "Increased video quality to 640x480@20fps, 400kbps")
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCService", "Error increasing video quality", e)
         }
     }
 
@@ -531,21 +547,29 @@ class WebRTCService : Service() {
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                // Принудительно указываем H264
+                mandatory.add(MediaConstraints.KeyValuePair("googCodecPreferences", "{\"video\":[\"H264\"]}"))
             }
 
             webRTCClient.peerConnection.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
-                    Log.d("WebRTCService", "Created offer: ${desc.description}")
+                    // Модифицируем SDP для H264
+                    val modifiedSdp = desc.description.replace(
+                        "a=fmtp:126",
+                        "a=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1"
+                    )
+                    val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
+
                     webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
-                            sendSessionDescription(desc) // Отправляем оффер через WebSocket
+                            sendSessionDescription(modifiedDesc)
                         }
                         override fun onSetFailure(error: String) {
                             Log.e("WebRTCService", "Error setting local description: $error")
                         }
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(error: String) {}
-                    }, desc)
+                    }, modifiedDesc)
                 }
                 override fun onCreateFailure(error: String) {
                     Log.e("WebRTCService", "Error creating offer: $error")

@@ -28,14 +28,14 @@ class WebRTCClient(
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            .setFieldTrials("WebRTC-VP8-Forced-Fallback-Encoder/Enabled/")
+            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            true,
-            true
+            true,  // enableIntelVp8Encoder
+            false  // enableH264HighProfile
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
@@ -50,31 +50,27 @@ class WebRTCClient(
             .createPeerConnectionFactory()
     }
 
+
+    // Функция для параметров H.264
+    private fun getDefaultH264Params(isHighProfile: Boolean): Map<String, String> {
+        return mapOf(
+            "profile-level-id" to if (isHighProfile) "640c1f" else "42e01f",
+            "level-asymmetry-allowed" to "1",
+            "packetization-mode" to "1",
+            // Устанавливаем низкий битрейт
+            "max-bitrate" to "500000", // 500 kbps
+            "start-bitrate" to "300000", // 300 kbps
+            "min-bitrate" to "200000" // 200 kbps
+        )
+    }
+
     private fun createPeerConnection(): PeerConnection {
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
-
             PeerConnection.IceServer.builder("turn:ardua.site:3478")
                 .setUsername("user1")
                 .setPassword("pass1")
                 .createIceServer(),
-
-            PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
-
-//            PeerConnection.IceServer.builder("turns:ardua.site:5349")
-//                .setUsername("user1")
-//                .setPassword("pass1")
-//                .createIceServer(),
-
-//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19301").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19303").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19304").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun.l.google.com:19305").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19301").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19303").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19304").createIceServer(),
-//            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19305").createIceServer()
+            PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -85,18 +81,14 @@ class WebRTCClient(
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
             keyType = PeerConnection.KeyType.ECDSA
 
-            // Оптимизация для мобильных
-            if (Build.MODEL.contains("iPhone")) {
-                audioJitterBufferMaxPackets = 50
-                audioJitterBufferFastAccelerate = true
-            } else {
-                // Настройки для Android
-                audioJitterBufferMaxPackets = 200
-                iceConnectionReceivingTimeout = 5000
-            }
+            // Оптимизации для H264
+            audioJitterBufferMaxPackets = 50
+            audioJitterBufferFastAccelerate = true
+            iceConnectionReceivingTimeout = 5000
         }
 
-        return peerConnectionFactory.createPeerConnection(rtcConfig, observer)!!
+        return peerConnectionFactory.createPeerConnection(rtcConfig, observer) ?:
+        throw IllegalStateException("Failed to create peer connection")
     }
 
     // В WebRTCClient.kt добавляем обработку переключения камеры
@@ -187,7 +179,9 @@ class WebRTCClient(
                     context,
                     videoSource.capturerObserver
                 )
-                capturer.startCapture(640, 480, 30)
+
+                // Старт с низким разрешением и FPS
+                capturer.startCapture(640, 480, 15)
 
                 localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
                     addSink(localView)
@@ -199,6 +193,26 @@ class WebRTCClient(
             Log.e("WebRTCClient", "Error creating video track", e)
         }
     }
+
+    // Функция для установки битрейта
+    fun setVideoEncoderBitrate(minBitrate: Int, currentBitrate: Int, maxBitrate: Int) {
+        try {
+            val sender = peerConnection.senders.find { it.track()?.kind() == "video" }
+            sender?.let { videoSender ->
+                val parameters = videoSender.parameters
+                if (parameters.encodings.isNotEmpty()) {
+                    parameters.encodings[0].minBitrateBps = minBitrate
+                    parameters.encodings[0].maxBitrateBps = maxBitrate
+                    parameters.encodings[0].bitratePriority = 1.0
+                    videoSender.parameters = parameters
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("WebRTCClient", "Error setting video bitrate", e)
+        }
+    }
+
+
 
     private fun createCameraCapturer(): VideoCapturer? {
         return Camera2Enumerator(context).run {
