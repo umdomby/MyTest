@@ -66,11 +66,11 @@ class WebRTCClient(
 
     private fun createPeerConnection(): PeerConnection {
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
+            PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
             PeerConnection.IceServer.builder("turn:ardua.site:3478")
                 .setUsername("user1")
                 .setPassword("pass1")
-                .createIceServer(),
-            PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer()
+                .createIceServer()
         )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
