@@ -524,6 +524,8 @@ class WebRTCService : Service() {
         Log.d("WebRTCService", "Received: $message")
 
         try {
+            val isLeader = message.optBoolean("isLeader", false)
+
             when (message.optString("type")) {
                 "rejoin_and_offer" -> {
                     Log.d("WebRTCService", "Received rejoin command from server")
@@ -548,7 +550,13 @@ class WebRTCService : Service() {
                     val estimation = message.optLong("estimation", 1000000)
                     handleBandwidthEstimation(estimation)
                 }
-                "offer" -> handleOffer(message)
+                "offer" -> {
+                    if (!isLeader) {
+                        Log.w("WebRTCService", "Received offer from non-leader, ignoring")
+                        return
+                    }
+                    handleOffer(message)
+                }
                 "answer" -> handleAnswer(message)
                 "ice_candidate" -> handleIceCandidate(message)
                 "room_info" -> {}
