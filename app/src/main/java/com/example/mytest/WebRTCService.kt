@@ -589,9 +589,11 @@ class WebRTCService : Service() {
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-                // Оптимизации для Huawei и других устройств
-                mandatory.add(MediaConstraints.KeyValuePair("googCodecPreferences", "{\"video\":[\"H264\"]}"))
+                // Форсируем H264
+                mandatory.add(MediaConstraints.KeyValuePair("googCodecPreferences", "H264"))
+                // Устанавливаем минимальные требования
                 mandatory.add(MediaConstraints.KeyValuePair("googCpuOveruseDetection", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googScreencastMinBitrate", "300"))
             }
 
             webRTCClient.peerConnection.createOffer(object : SdpObserver {
@@ -607,10 +609,18 @@ class WebRTCService : Service() {
                         override fun onSetSuccess() {
                             Log.d("WebRTCService", "Successfully set local description")
                             sendSessionDescription(modifiedDesc)
+
+                            // Форсируем отправку ICE кандидатов
+                            handler.postDelayed({
+                                webRTCClient.peerConnection.iceGatheringState()?.let { state ->
+                                    if (state == PeerConnection.IceGatheringState.COMPLETE) {
+                                        Log.d("WebRTCService", "ICE gathering complete")
+                                    }
+                                }
+                            }, 1000)
                         }
                         override fun onSetFailure(error: String) {
                             Log.e("WebRTCService", "Error setting local description: $error")
-                            // Повторяем попытку через 2 секунды
                             handler.postDelayed({ createOffer() }, 2000)
                         }
                         override fun onCreateSuccess(p0: SessionDescription?) {}
@@ -620,7 +630,6 @@ class WebRTCService : Service() {
 
                 override fun onCreateFailure(error: String) {
                     Log.e("WebRTCService", "Error creating offer: $error")
-                    // Повторяем попытку через 2 секунды
                     handler.postDelayed({ createOffer() }, 2000)
                 }
 
@@ -629,7 +638,6 @@ class WebRTCService : Service() {
             }, constraints)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error in createOffer", e)
-            // Повторяем попытку через 2 секунды
             handler.postDelayed({ createOffer() }, 2000)
         }
     }
