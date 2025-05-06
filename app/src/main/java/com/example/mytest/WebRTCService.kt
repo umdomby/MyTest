@@ -160,7 +160,7 @@ class WebRTCService : Service() {
     }
 
     private fun adjustVideoQualityBasedOnStats() {
-        webRTCClient.peerConnection.getStats { statsReport ->
+        webRTCClient.peerConnection?.getStats { statsReport ->
             try {
                 var videoPacketsLost = 0L
                 var videoPacketsSent = 0L
@@ -172,6 +172,7 @@ class WebRTCService : Service() {
                             videoPacketsLost += stats.members["packetsLost"] as? Long ?: 0L
                             videoPacketsSent += stats.members["packetsSent"] as? Long ?: 1L
                         }
+
                         stats.type == "candidate-pair" && stats.members["state"] == "succeeded" -> {
                             availableSendBandwidth = stats.members["availableOutgoingBitrate"] as? Long ?: 0L
                         }
@@ -596,7 +597,7 @@ class WebRTCService : Service() {
                 mandatory.add(MediaConstraints.KeyValuePair("googScreencastMinBitrate", "300"))
             }
 
-            webRTCClient.peerConnection.createOffer(object : SdpObserver {
+            webRTCClient.peerConnection?.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     // Модифицируем SDP для лучшей совместимости
                     var modifiedSdp = desc.description
@@ -605,24 +606,26 @@ class WebRTCService : Service() {
 
                     val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
 
-                    webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
+                    webRTCClient.peerConnection!!.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
                             Log.d("WebRTCService", "Successfully set local description")
                             sendSessionDescription(modifiedDesc)
 
                             // Форсируем отправку ICE кандидатов
                             handler.postDelayed({
-                                webRTCClient.peerConnection.iceGatheringState()?.let { state ->
+                                webRTCClient.peerConnection!!.iceGatheringState()?.let { state ->
                                     if (state == PeerConnection.IceGatheringState.COMPLETE) {
                                         Log.d("WebRTCService", "ICE gathering complete")
                                     }
                                 }
                             }, 1000)
                         }
+
                         override fun onSetFailure(error: String) {
                             Log.e("WebRTCService", "Error setting local description: $error")
                             handler.postDelayed({ createOffer() }, 2000)
                         }
+
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(error: String) {}
                     }, modifiedDesc)
@@ -667,7 +670,7 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
-            webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
+            webRTCClient.peerConnection?.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     val constraints = MediaConstraints().apply {
                         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -675,9 +678,11 @@ class WebRTCService : Service() {
                     }
                     createAnswer(constraints)
                 }
+
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Error setting remote description: $error")
                 }
+
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
             }, sessionDescription)
@@ -688,23 +693,27 @@ class WebRTCService : Service() {
 
     private fun createAnswer(constraints: MediaConstraints) {
         try {
-            webRTCClient.peerConnection.createAnswer(object : SdpObserver {
+            webRTCClient.peerConnection?.createAnswer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     Log.d("WebRTCService", "Created answer: ${desc.description}")
-                    webRTCClient.peerConnection.setLocalDescription(object : SdpObserver {
+                    webRTCClient.peerConnection!!.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
                             sendSessionDescription(desc)
                         }
+
                         override fun onSetFailure(error: String) {
                             Log.e("WebRTCService", "Error setting local description: $error")
                         }
+
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(error: String) {}
                     }, desc)
                 }
+
                 override fun onCreateFailure(error: String) {
                     Log.e("WebRTCService", "Error creating answer: $error")
                 }
+
                 override fun onSetSuccess() {}
                 override fun onSetFailure(error: String) {}
             }, constraints)
@@ -740,15 +749,17 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
-            webRTCClient.peerConnection.setRemoteDescription(object : SdpObserver {
+            webRTCClient.peerConnection?.setRemoteDescription(object : SdpObserver {
                 override fun onSetSuccess() {
                     Log.d("WebRTCService", "Answer accepted, connection should be established")
                 }
+
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Error setting answer: $error")
                     // При ошибке запрашиваем новый оффер
                     handler.postDelayed({ createOffer() }, 2000)
                 }
+
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(error: String) {}
             }, sessionDescription)
@@ -765,7 +776,7 @@ class WebRTCService : Service() {
                 ice.getInt("sdpMLineIndex"),
                 ice.getString("candidate")
             )
-            webRTCClient.peerConnection.addIceCandidate(iceCandidate)
+            webRTCClient.peerConnection?.addIceCandidate(iceCandidate)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error handling ICE candidate", e)
         }

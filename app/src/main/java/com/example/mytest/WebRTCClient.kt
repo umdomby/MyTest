@@ -13,7 +13,7 @@ class WebRTCClient(
     private val observer: PeerConnection.Observer
 ) {
     lateinit var peerConnectionFactory: PeerConnectionFactory
-    var peerConnection: PeerConnection
+    var peerConnection: PeerConnection? = null
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     internal var videoCapturer: VideoCapturer? = null
@@ -22,20 +22,24 @@ class WebRTCClient(
     init {
         initializePeerConnectionFactory()
         peerConnection = createPeerConnection()
+        if (peerConnection == null) {
+            throw IllegalStateException("Failed to create peer connection")
+        }
         createLocalTracks()
     }
 
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
+            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")  // Форсируем H.264
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
+        // Используем только H.264 кодек
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            true,  // enableIntelVp8Encoder
-            false  // enableH264HighProfile
+            false,  // enableIntelVp8Encoder
+            true   // enableH264HighProfile
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
@@ -64,7 +68,7 @@ class WebRTCClient(
         )
     }
 
-    private fun createPeerConnection(): PeerConnection {
+    private fun createPeerConnection(): PeerConnection? {
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
             PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
             PeerConnection.IceServer.builder("turn:ardua.site:3478")
@@ -80,15 +84,9 @@ class WebRTCClient(
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             candidateNetworkPolicy = PeerConnection.CandidateNetworkPolicy.ALL
             keyType = PeerConnection.KeyType.ECDSA
-
-            // Оптимизации для H264
-            audioJitterBufferMaxPackets = 50
-            audioJitterBufferFastAccelerate = true
-            iceConnectionReceivingTimeout = 5000
         }
 
-        return peerConnectionFactory.createPeerConnection(rtcConfig, observer) ?:
-        throw IllegalStateException("Failed to create peer connection")
+        return peerConnectionFactory.createPeerConnection(rtcConfig, observer)
     }
 
     // В WebRTCClient.kt добавляем обработку переключения камеры
@@ -143,12 +141,12 @@ class WebRTCClient(
 
         localAudioTrack?.let {
             stream.addTrack(it)
-            peerConnection.addTrack(it, listOf(streamId))
+            peerConnection?.addTrack(it, listOf(streamId))
         }
 
         localVideoTrack?.let {
             stream.addTrack(it)
-            peerConnection.addTrack(it, listOf(streamId))
+            peerConnection?.addTrack(it, listOf(streamId))
         }
     }
 
@@ -197,7 +195,7 @@ class WebRTCClient(
     // Функция для установки битрейта
     fun setVideoEncoderBitrate(minBitrate: Int, currentBitrate: Int, maxBitrate: Int) {
         try {
-            val sender = peerConnection.senders.find { it.track()?.kind() == "video" }
+            val sender = peerConnection?.senders?.find { it.track()?.kind() == "video" }
             sender?.let { videoSender ->
                 val parameters = videoSender.parameters
                 if (parameters.encodings.isNotEmpty()) {
@@ -228,20 +226,64 @@ class WebRTCClient(
 
     fun close() {
         try {
-            videoCapturer?.let {
-                it.stopCapture()
-                it.dispose()
+            videoCapturer?.let { capturer ->
+                try {
+                    capturer.stopCapture()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error stopping capturer", e)
+                }
+                try {
+                    capturer.dispose()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error disposing capturer", e)
+                }
             }
-            localVideoTrack?.let {
-                it.removeSink(localView)
-                it.dispose()
+
+            localVideoTrack?.let { track ->
+                try {
+                    track.removeSink(localView)
+                    track.dispose()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error disposing video track", e)
+                }
             }
-            localAudioTrack?.dispose()
-            surfaceTextureHelper?.dispose()
-            peerConnection.close()
-            peerConnection.dispose()
+
+            localAudioTrack?.let { track ->
+                try {
+                    track.dispose()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error disposing audio track", e)
+                }
+            }
+
+            surfaceTextureHelper?.let { helper ->
+                try {
+                    helper.dispose()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error disposing surface helper", e)
+                }
+            }
+
+            peerConnection?.let { pc ->
+                try {
+                    pc.close()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error closing peer connection", e)
+                }
+                try {
+                    pc.dispose()
+                } catch (e: Exception) {
+                    Log.e("WebRTCClient", "Error disposing peer connection", e)
+                }
+            }
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error closing resources", e)
+            Log.e("WebRTCClient", "Error in cleanup", e)
+        } finally {
+            videoCapturer = null
+            localVideoTrack = null
+            localAudioTrack = null
+            surfaceTextureHelper = null
+            peerConnection = null
         }
     }
 }
