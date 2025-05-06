@@ -38,8 +38,8 @@ class WebRTCClient(
         // Используем только H.264 кодек
         val videoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            false,  // enableIntelVp8Encoder
-            true   // enableH264HighProfile
+            false,  // disable Intel VP8 encoder
+            true   // enable H264 High Profile
         )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
@@ -178,14 +178,15 @@ class WebRTCClient(
                     videoSource.capturerObserver
                 )
 
-                // Старт с низким разрешением и FPS
-                capturer.startCapture(640, 480, 15)
+                // Старт с оптимальными параметрами для H264
+                capturer.startCapture(640, 480, 15) // 640x480 @ 15fps
 
                 localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
                     addSink(localView)
                 }
-            } ?: run {
-                Log.e("WebRTCClient", "Failed to create video capturer")
+
+                // Устанавливаем начальный битрейт
+                setVideoEncoderBitrate(300000, 400000, 500000) // 300-500 kbps
             }
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error creating video track", e)

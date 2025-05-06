@@ -172,7 +172,6 @@ class WebRTCService : Service() {
                             videoPacketsLost += stats.members["packetsLost"] as? Long ?: 0L
                             videoPacketsSent += stats.members["packetsSent"] as? Long ?: 1L
                         }
-
                         stats.type == "candidate-pair" && stats.members["state"] == "succeeded" -> {
                             availableSendBandwidth = stats.members["availableOutgoingBitrate"] as? Long ?: 0L
                         }
@@ -610,15 +609,6 @@ class WebRTCService : Service() {
                         override fun onSetSuccess() {
                             Log.d("WebRTCService", "Successfully set local description")
                             sendSessionDescription(modifiedDesc)
-
-                            // Форсируем отправку ICE кандидатов
-                            handler.postDelayed({
-                                webRTCClient.peerConnection!!.iceGatheringState()?.let { state ->
-                                    if (state == PeerConnection.IceGatheringState.COMPLETE) {
-                                        Log.d("WebRTCService", "ICE gathering complete")
-                                    }
-                                }
-                            }, 1000)
                         }
 
                         override fun onSetFailure(error: String) {
