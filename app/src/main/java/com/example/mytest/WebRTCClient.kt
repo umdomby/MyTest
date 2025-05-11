@@ -54,20 +54,6 @@ class WebRTCClient(
             .createPeerConnectionFactory()
     }
 
-
-    // Функция для параметров H.264
-    private fun getDefaultH264Params(isHighProfile: Boolean): Map<String, String> {
-        return mapOf(
-            "profile-level-id" to if (isHighProfile) "640c1f" else "42e01f",
-            "level-asymmetry-allowed" to "1",
-            "packetization-mode" to "1",
-            // Устанавливаем низкий битрейт
-            "max-bitrate" to "500000", // 500 kbps
-            "start-bitrate" to "300000", // 300 kbps
-            "min-bitrate" to "200000" // 200 kbps
-        )
-    }
-
     private fun createPeerConnection(): PeerConnection? {
         val rtcConfig = PeerConnection.RTCConfiguration(listOf(
             PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
