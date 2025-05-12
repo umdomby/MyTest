@@ -31,18 +31,28 @@ class WebRTCClient(
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")  // Форсируем H.264
+            // Форсируем H.264 High Profile и разрешаем разные режимы пакетизации
+            // 42e01f (Constrained Baseline) часто более совместим, чем High.
+            // Если High Profile (обычно 64xxxx) вызывает проблемы с iOS/старыми Android, используйте:
+            // .setFieldTrials("WebRTC-H264Profile/42e01f/") // Пример для Constrained Baseline
+            .setFieldTrials("WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
-        // Используем только H.264 кодек
-        val videoEncoderFactory = DefaultVideoEncoderFactory(
+        // Используем DefaultVideoEncoderFactory, отключая другие кодеки, если возможно,
+        // или SoftwareVideoEncoderFactory для большей предсказуемости H.264.
+        val videoEncoderFactory: VideoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
             false,  // disable Intel VP8 encoder
-            true   // enable H264 High Profile
+            true    // enable H264 High Profile (или false, если H264 обеспечивается платформой/Software factory)
         )
+        // Альтернатива для большей стабильности H.264, если есть проблемы с аппаратными кодерами:
+        // val videoEncoderFactory: VideoEncoderFactory = SoftwareVideoEncoderFactory()
 
-        val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+        val videoDecoderFactory: VideoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+        // Альтернатива:
+        // val videoDecoderFactory: VideoDecoderFactory = SoftwareVideoDecoderFactory()
+
 
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(videoEncoderFactory)
@@ -62,6 +72,7 @@ class WebRTCClient(
                 .setPassword("pass1")
                 .createIceServer()
         )).apply {
+
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceTransportsType = PeerConnection.IceTransportsType.ALL
