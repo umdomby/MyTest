@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -155,25 +156,54 @@ class WebRTCService : Service() {
             if (isConnected) {
                 adjustVideoQualityBasedOnStats()
             }
-            handler.postDelayed(this, 10000) // Каждые 10 секунд
+            handler.postDelayed(this, 8000) // Каждые 8 секунд
+        }
+    }
+
+    private fun getNetworkType(): String {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return "unknown"
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // Для Android 6.0+ используем новый API
+            val network = cm.activeNetwork ?: return "unknown"
+            val caps = cm.getNetworkCapabilities(network) ?: return "unknown"
+
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
+                else -> "unknown"
+            }
+        } else {
+            // Для старых версий Android используем старый API
+            @Suppress("DEPRECATION")
+            when (cm.activeNetworkInfo?.type) {
+                ConnectivityManager.TYPE_WIFI -> "wifi"
+                ConnectivityManager.TYPE_MOBILE -> "mobile"
+                else -> "unknown"
+            }
         }
     }
 
     private fun adjustVideoQualityBasedOnStats() {
+        val networkType = getNetworkType()
+        val isMobile = networkType == "mobile"
+
         webRTCClient.peerConnection?.getStats { statsReport ->
             try {
                 var videoPacketsLost = 0L
                 var videoPacketsSent = 0L
                 var availableSendBandwidth = 0L
+                var currentBitrate = 0L
 
                 statsReport.statsMap.values.forEach { stats ->
                     when {
                         stats.type == "outbound-rtp" && stats.id.contains("video") -> {
                             videoPacketsLost += stats.members["packetsLost"] as? Long ?: 0L
                             videoPacketsSent += stats.members["packetsSent"] as? Long ?: 1L
+                            currentBitrate = (stats.members["bytesSent"] as? Long ?: 0L) * 8 / 1000 // kbps
                         }
                         stats.type == "candidate-pair" && stats.members["state"] == "succeeded" -> {
-                            availableSendBandwidth = stats.members["availableOutgoingBitrate"] as? Long ?: 0L
+                            availableSendBandwidth = (stats.members["availableOutgoingBitrate"] as? Long ?: 0L) / 1000 // kbps
                         }
                     }
                 }
@@ -182,8 +212,19 @@ class WebRTCService : Service() {
                     val lossRate = videoPacketsLost.toDouble() / videoPacketsSent.toDouble()
                     handler.post {
                         when {
-                            lossRate > 0.1 -> reduceVideoQuality() // >10% потерь
-                            lossRate < 0.05 && availableSendBandwidth > 700000 -> increaseVideoQuality() // <5% потерь и хорошая пропускная способность
+                            // Более агрессивные пороги для мобильных сетей
+                            isMobile && (lossRate > 0.05 || currentBitrate > (availableSendBandwidth * 0.8)) ->
+                                reduceVideoQuality(true, availableSendBandwidth)
+
+                            isMobile && lossRate < 0.02 && availableSendBandwidth > 500 ->
+                                increaseVideoQuality(true, availableSendBandwidth)
+
+                            // Более либеральные пороги для WiFi
+                            !isMobile && (lossRate > 0.05 || currentBitrate > (availableSendBandwidth * 0.8)) ->
+                                reduceVideoQuality(false, availableSendBandwidth)
+
+                            !isMobile && lossRate < 0.02 && availableSendBandwidth > 500 ->
+                                increaseVideoQuality(false, availableSendBandwidth)
                         }
                     }
                 }
@@ -192,27 +233,68 @@ class WebRTCService : Service() {
             }
         }
     }
-
-    private fun reduceVideoQuality() {
+    private fun reduceVideoQuality(isMobile: Boolean, availableBandwidth: Long) {
         try {
             webRTCClient.videoCapturer?.let { capturer ->
+                val targetBitrate = if (isMobile) {
+                    // Для мобильных сетей используем более низкие значения
+                    (availableBandwidth * 0.5).toInt().coerceAtMost(200) // Макс 200 кбит/с
+                } else {
+                    // Для WiFi можно оставить больше
+                    (availableBandwidth * 0.5).toInt().coerceAtMost(200) // Макс 300 кбит/с
+                }
+
                 capturer.stopCapture()
-                capturer.startCapture(480, 360, 15)
-                webRTCClient.setVideoEncoderBitrate(150000, 200000, 300000)
-                Log.d("WebRTCService", "Reduced video quality to 480x360@15fps, 200kbps")
+
+                // Устанавливаем разрешение в зависимости от типа сети
+                if (isMobile) {
+                    capturer.startCapture(480, 360, 12) // Низкое разрешение для мобильных сетей
+                } else {
+                    capturer.startCapture(480, 360, 12) // Среднее разрешение для WiFi
+                }
+
+                webRTCClient.setVideoEncoderBitrate(
+                    50000, 100000, 150000
+//                    (targetBitrate * 0.7).toInt(), // min
+//                    targetBitrate,                 // current
+//                    (targetBitrate * 1.3).toInt()  // max
+                )
+
+                Log.d("WebRTCService", "Reduced video quality to ${targetBitrate}kbps (${if(isMobile) "mobile" else "wifi"})")
             }
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error reducing video quality", e)
         }
     }
 
-    private fun increaseVideoQuality() {
+    private fun increaseVideoQuality(isMobile: Boolean, availableBandwidth: Long) {
         try {
             webRTCClient.videoCapturer?.let { capturer ->
+                val targetBitrate = if (isMobile) {
+                    // Для мобильных сетей ограничиваем максимальный битрейт
+                    (availableBandwidth * 0.6).toInt().coerceAtMost(350) // Макс 350 кбит/с
+                } else {
+                    // Для WiFi можно больше
+                    (availableBandwidth * 0.7).toInt().coerceAtMost(350) // Макс 500 кбит/с
+                }
+
                 capturer.stopCapture()
-                capturer.startCapture(640, 480, 20)
-                webRTCClient.setVideoEncoderBitrate(300000, 400000, 500000)
-                Log.d("WebRTCService", "Increased video quality to 640x480@20fps, 400kbps")
+
+                // Устанавливаем разрешение в зависимости от типа сети
+                if (isMobile) {
+                    capturer.startCapture(640, 480, 15) // Среднее разрешение для мобильных сетей
+                } else {
+                    capturer.startCapture(640, 480, 15) // Более высокое разрешение для WiFi
+                }
+
+                webRTCClient.setVideoEncoderBitrate(
+                    50000, 100000, 150000
+//                    (targetBitrate * 0.8).toInt(), // min
+//                    targetBitrate,                 // current
+//                    (targetBitrate * 1.5).toInt()  // max
+                )
+
+                Log.d("WebRTCService", "Increased video quality to ${targetBitrate}kbps (${if(isMobile) "mobile" else "wifi"})")
             }
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error increasing video quality", e)
@@ -327,8 +409,9 @@ class WebRTCService : Service() {
         )
 
         // 4. Установка начального битрейта
-        webRTCClient.setVideoEncoderBitrate(300000, 400000, 500000)
+        webRTCClient.setVideoEncoderBitrate(50000, 100000, 150000)
     }
+
 
     private fun createPeerConnectionObserver() = object : PeerConnection.Observer {
         override fun onIceCandidate(candidate: IceCandidate?) {
