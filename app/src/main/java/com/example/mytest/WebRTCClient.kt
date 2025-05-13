@@ -10,7 +10,8 @@ class WebRTCClient(
     private val eglBase: EglBase,
     private val localView: SurfaceViewRenderer,
     private val remoteView: SurfaceViewRenderer,
-    private val observer: PeerConnection.Observer
+    private val observer: PeerConnection.Observer,
+    private val preferredCodec: String = "H264"
 ) {
     lateinit var peerConnectionFactory: PeerConnectionFactory
     var peerConnection: PeerConnection? = null
@@ -28,31 +29,25 @@ class WebRTCClient(
         createLocalTracks()
     }
 
-    private fun initializePeerConnectionFactory() {
+    private fun initializePeerConnectionFactory(preferredCodec: String = "H264") {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            // Форсируем H.264 High Profile и разрешаем разные режимы пакетизации
-            // 42e01f (Constrained Baseline) часто более совместим, чем High.
-            // Если High Profile (обычно 64xxxx) вызывает проблемы с iOS/старыми Android, используйте:
-            // .setFieldTrials("WebRTC-H264Profile/42e01f/") // Пример для Constrained Baseline
-            .setFieldTrials("WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/")
+            .setFieldTrials(
+                when (preferredCodec) {
+                    "VP8" -> "WebRTC-VP8/Enabled/"
+                    else -> "WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/"
+                }
+            )
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
-        // Используем DefaultVideoEncoderFactory, отключая другие кодеки, если возможно,
-        // или SoftwareVideoEncoderFactory для большей предсказуемости H.264.
         val videoEncoderFactory: VideoEncoderFactory = DefaultVideoEncoderFactory(
             eglBase.eglBaseContext,
-            false,  // disable Intel VP8 encoder
-            true    // enable H264 High Profile (или false, если H264 обеспечивается платформой/Software factory)
+            false, // disable Intel VP8 encoder
+            preferredCodec == "H264" // enable H264 High Profile
         )
-        // Альтернатива для большей стабильности H.264, если есть проблемы с аппаратными кодерами:
-        // val videoEncoderFactory: VideoEncoderFactory = SoftwareVideoEncoderFactory()
 
         val videoDecoderFactory: VideoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
-        // Альтернатива:
-        // val videoDecoderFactory: VideoDecoderFactory = SoftwareVideoDecoderFactory()
-
 
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(videoEncoderFactory)
