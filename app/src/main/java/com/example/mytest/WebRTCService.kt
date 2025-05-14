@@ -1,4 +1,3 @@
-// file: src/main/java/com/example/mytest/WebRTCService.kt
 package com.example.mytest
 
 import android.annotation.SuppressLint
@@ -96,12 +95,9 @@ class WebRTCService : Service() {
 
     private fun isValidSdp(sdp: String, codecName: String): Boolean {
         val hasVideoSection = sdp.contains("m=video")
-        val hasCodec = sdp.contains("a=rtpmap:.*$codecName")
-        if (!hasVideoSection || !hasCodec) {
-            Log.e("WebRTCService", "SDP validation failed: hasVideoSection=$hasVideoSection, hasCodec=$hasCodec")
-            return false
-        }
-        return true
+        val hasCodec = sdp.contains("a=rtpmap:\\d+ $codecName/\\d+".toRegex())
+        Log.d("WebRTCService", "SDP validation: hasVideoSection=$hasVideoSection, hasCodec=$hasCodec")
+        return hasVideoSection && hasCodec
     }
 
     private val webSocketListener = object : WebSocketListener() {
@@ -161,7 +157,6 @@ class WebRTCService : Service() {
         }
     }
 
-    // Добавляем в класс WebRTCService
     private val bandwidthEstimationRunnable = object : Runnable {
         override fun run() {
             if (isConnected) {
@@ -268,7 +263,7 @@ class WebRTCService : Service() {
             startForegroundService()
             initializeWebRTC()
             connectWebSocket()
-            registerNetworkCallback() // Добавлен вызов регистрации коллбэка сети
+            registerNetworkCallback()
         } catch (e: Exception) {
             Log.e("WebRTCService", "Initialization failed", e)
             stopSelf()
@@ -288,7 +283,6 @@ class WebRTCService : Service() {
     private fun isServiceActive(): Boolean {
         return ::webSocketClient.isInitialized && webSocketClient.isConnected()
     }
-
 
     private fun startForegroundService() {
         val notification = createNotification()
@@ -319,9 +313,13 @@ class WebRTCService : Service() {
         val localView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
             setMirror(true)
+            setZOrderMediaOverlay(true)
+            setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
         }
         remoteView = SurfaceViewRenderer(this).apply {
             init(eglBase.eglBaseContext, null)
+            setZOrderMediaOverlay(true)
+            setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
         }
         webRTCClient = WebRTCClient(
             context = this,
@@ -359,7 +357,9 @@ class WebRTCService : Service() {
         override fun onAddStream(stream: MediaStream?) {
             stream?.videoTracks?.forEach { track ->
                 Log.d("WebRTCService", "Adding remote video track from stream")
-                track.addSink(remoteView)
+                handler.post {
+                    track.addSink(remoteView)
+                }
             }
         }
         override fun onRemoveStream(p0: MediaStream?) {}
@@ -493,6 +493,7 @@ class WebRTCService : Service() {
                 put("room", roomName)
                 put("username", userName)
                 put("isLeader", true)
+                put("preferredCodec", "H264")
             }
             webSocketClient.send(message.toString())
             Log.d("WebRTCService", "Sent join request for room: $roomName")
@@ -532,17 +533,16 @@ class WebRTCService : Service() {
 
             when (message.optString("type")) {
                 "rejoin_and_offer" -> {
-                    Log.d("WebRTCService", "Received rejoin command from server")
-                    val preferredCodec = message.optString("preferredCodec", "H264") // Используем переданный кодек
+                    Log.d("WebRTCService", "Received rejoin_and_offer with codec: ${message.optString("preferredCodec", "H264")}")
                     handler.post {
                         cleanupWebRTCResources()
                         initializeWebRTC()
-                        createOffer(preferredCodec)
+                        createOffer(message.optString("preferredCodec", "H264"))
                     }
                 }
                 "create_offer_for_new_follower" -> {
                     Log.d("WebRTCService", "Received request to create offer for new follower")
-                    val preferredCodec = message.optString("preferredCodec", "H264") // Используем переданный кодек
+                    val preferredCodec = message.optString("preferredCodec", "H264")
                     handler.post {
                         createOffer(preferredCodec)
                     }
@@ -576,7 +576,6 @@ class WebRTCService : Service() {
         }
     }
 
-    // Вспомогательная функция для модификации SDP на Android
     private fun normalizeSdpForCodec(sdp: String, targetCodec: String, targetBitrateAs: Int = 300): String {
         var newSdp = sdp
         val codecName = when (targetCodec) {
@@ -590,10 +589,41 @@ class WebRTCService : Service() {
 
         Log.d("WebRTCService", "Normalizing SDP for codec: $codecName")
 
-        // 1. Найти payload type для целевого кодека
+        // Найти payload type для целевого кодека
         val rtpmapRegex = "a=rtpmap:(\\d+) $codecName(?:/\\d+)?".toRegex()
         val rtpmapMatches = rtpmapRegex.findAll(newSdp)
-        val targetPayloadTypes = rtpmapMatches.map { it.groupValues[1] }.toList()
+        var targetPayloadTypes = rtpmapMatches.map { it.groupValues[1] }.toList()
+
+        // Если H.264 отсутствует, добавить его минимально
+        if (targetPayloadTypes.isEmpty() && codecName == "H264") {
+            Log.w("WebRTCService", "H264 payload type not found, adding minimal H264 lines")
+            targetPayloadTypes = listOf("126")
+            val h264Lines = """
+                a=rtpmap:126 H264/90000
+                a=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1
+                a=rtcp-fb:126 ccm fir
+                a=rtcp-fb:126 nack
+                a=rtcp-fb:126 nack pli
+            """.trimIndent()
+
+            val lines = newSdp.split("\r\n").toMutableList()
+            var videoSectionIndex = -1
+            for (i in lines.indices) {
+                if (lines[i].startsWith("m=video")) {
+                    videoSectionIndex = i
+                    // Добавить H.264 payload type в m=video
+                    lines[i] = lines[i].replace(Regex("(\\d+\\s+UDP/TLS/RTP/SAVPF\\s+)(.*)"), "$1$targetPayloadTypes $2")
+                    break
+                }
+            }
+            if (videoSectionIndex != -1) {
+                lines.add(videoSectionIndex + 1, h264Lines)
+                newSdp = lines.joinToString("\r\n")
+            } else {
+                Log.e("WebRTCService", "No m=video section found, cannot add H264")
+                return sdp
+            }
+        }
 
         if (targetPayloadTypes.isEmpty()) {
             Log.e("WebRTCService", "$codecName payload type not found in SDP")
@@ -603,61 +633,28 @@ class WebRTCService : Service() {
         val targetPayloadType = targetPayloadTypes.first()
         Log.d("WebRTCService", "Found $codecName payload type: $targetPayloadType")
 
-        // 2. Удалить другие видеокодеки
-        val videoCodecsToRemove = when (codecName) {
-            "H264" -> listOf("VP8", "VP9", "AV1")
-            "VP8" -> listOf("H264", "VP9", "AV1")
-            else -> emptyList()
-        }
-        for (codecToRemove in videoCodecsToRemove) {
-            val ptToRemoveRegex = "a=rtpmap:(\\d+) $codecToRemove(?:/\\d+)?\r\n".toRegex()
-            newSdp = newSdp.replace(ptToRemoveRegex, "")
-            newSdp = newSdp.replace("a=fmtp:(\\d+) .*\\r\\n".toRegex(), "")
-            newSdp = newSdp.replace("a=rtcp-fb:(\\d+) .*\\r\\n".toRegex(), "")
-            Log.d("WebRTCService", "Removed $codecToRemove from SDP")
-        }
-
-        // 3. Модифицировать fmtp для H.264
-        if (codecName == "H264") {
-            val desiredFmtp = "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1"
-            for (pt in targetPayloadTypes) {
-                val fmtpSearchRegex = "a=fmtp:$pt .*\r\n".toRegex()
-                val newFmtpLine = "a=fmtp:$pt $desiredFmtp\r\n"
-                if (newSdp.contains(fmtpSearchRegex)) {
-                    newSdp = newSdp.replace(fmtpSearchRegex, newFmtpLine)
-                } else {
-                    newSdp = newSdp.replace(
-                        "a=rtpmap:$pt $codecName(?:/\\d+)?\r\n",
-                        "a=rtpmap:$pt $codecName/90000\r\n$newFmtpLine"
-                    )
-                }
-                Log.d("WebRTCService", "Set $codecName (PT: $pt) fmtp to: $desiredFmtp")
+        // Приоритизировать целевой кодек в m=video, сохраняя другие кодеки
+        newSdp = newSdp.replace(
+            Regex("^(m=video\\s+\\d+\\s+UDP/(?:TLS/)?RTP/SAVPF\\s+)(.*)$", RegexOption.MULTILINE)
+        ) { matchResult ->
+            val payloads = matchResult.groupValues[2].split(" ").toMutableList()
+            if (payloads.contains(targetPayloadType)) {
+                payloads.remove(targetPayloadType)
+                payloads.add(0, targetPayloadType)
             }
+            "${matchResult.groupValues[1]}${payloads.joinToString(" ")}"
         }
+        Log.d("WebRTCService", "Updated m=video to prioritize $codecName payload type: $targetPayloadType")
 
-        // 4. Убедиться, что целевой кодек первый в m=video линии
-        val mLineRegex = "^(m=video\\s+\\d+\\s+UDP/(?:TLS/)?RTP/SAVPF\\s+)(.*)".toRegex(RegexOption.MULTILINE)
-        newSdp = mLineRegex.replace(newSdp) { mLineMatchResult ->
-            val prefix = mLineMatchResult.groupValues[1]
-            var payloads = mLineMatchResult.groupValues[2].split(" ").toMutableList()
-            val activePayloadTypesInSdp = "a=rtpmap:(\\d+)".toRegex().findAll(newSdp).map { it.groupValues[1] }.toSet()
-            payloads = payloads.filter { activePayloadTypesInSdp.contains(it) }.toMutableList()
-            val targetPtsInOrder = targetPayloadTypes.filter { payloads.contains(it) }
-            targetPtsInOrder.forEach { payloads.remove(it) }
-            payloads.addAll(0, targetPtsInOrder)
-            Log.d("WebRTCService", "Reordered m=video payloads to: ${payloads.joinToString(" ")}")
-            prefix + payloads.joinToString(" ")
-        }
-
-        // 5. Установить битрейт для видео секции
-        newSdp = newSdp.replace(Regex("^(a=mid:video\r\n(?:(?!a=mid:).*\r\n)*?)b=(AS|TIAS):\\d+\r\n", RegexOption.MULTILINE), "$1")
+        // Установить битрейт
+        newSdp = newSdp.replace(
+            Regex("^(a=mid:video\r\n(?:(?!a=mid:).*\r\n)*?)b=(AS|TIAS):\\d+\r\n", RegexOption.MULTILINE),
+            "$1"
+        )
         newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\nb=AS:$targetBitrateAs\r\n")
         Log.d("WebRTCService", "Set video bitrate to AS:$targetBitrateAs")
 
-        // 6. Добавить информацию о кодеке в SDP для отладки
-        newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\na=codec-info:$codecName\r\n")
-
-        // 7. Проверка валидности SDP
+        // Валидация SDP
         if (!isValidSdp(newSdp, codecName)) {
             Log.e("WebRTCService", "Invalid SDP after modification: missing m=video or $codecName")
             return sdp
@@ -667,37 +664,19 @@ class WebRTCService : Service() {
         return newSdp
     }
 
-    // Модифицируем createOffer для принудительного создания нового оффера
     private fun createOffer(preferredCodec: String = "H264") {
-        Log.d("WebRTCService", "Creating offer with preferred codec: $preferredCodec")
         try {
-            if (!::webRTCClient.isInitialized || !isConnected) {
-                Log.w("WebRTCService", "Cannot create offer - not initialized or connected")
+            if (!::webRTCClient.isInitialized || !isConnected || webRTCClient.peerConnection == null) {
+                Log.e("WebRTCService", "Cannot create offer - not initialized, not connected, or PeerConnection is null")
                 return
             }
 
-            // Настройка кодеков через RTCRtpTransceiver
-            webRTCClient.peerConnection?.transceivers?.filter {
-                it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO && it.sender != null
-            }?.forEach { transceiver ->
-                try {
-                    val sender = transceiver.sender
-                    val parameters = sender.parameters
-                    if (parameters != null) {
-                        val targetCodecs = parameters.codecs.filter { codecInfo ->
-                            codecInfo.name.equals(preferredCodec, ignoreCase = true)
-                        }
-                        if (targetCodecs.isNotEmpty()) {
-                            parameters.codecs = ArrayList(targetCodecs)
-                            val result = sender.setParameters(parameters)
-                            Log.d("WebRTCService", "Set $preferredCodec codec preference: $result")
-                        } else {
-                            Log.w("WebRTCService", "$preferredCodec codec not found in sender parameters")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("WebRTCService", "Error setting codec preferences", e)
-                }
+            Log.d("WebRTCService", "Creating offer with preferred codec: $preferredCodec, PeerConnection state: ${webRTCClient.peerConnection?.signalingState()}")
+            // Проверяем состояние PeerConnection
+            if (webRTCClient.peerConnection?.signalingState() == PeerConnection.SignalingState.CLOSED) {
+                Log.e("WebRTCService", "PeerConnection is closed, reinitializing WebRTC")
+                cleanupWebRTCResources()
+                initializeWebRTC()
             }
 
             val constraints = MediaConstraints().apply {
@@ -708,57 +687,60 @@ class WebRTCService : Service() {
             }
 
             webRTCClient.peerConnection?.createOffer(object : SdpObserver {
-                override fun onCreateSuccess(desc: SessionDescription) {
+                override fun onCreateSuccess(desc: SessionDescription?) {
+                    if (desc == null) {
+                        Log.e("WebRTCService", "Created SessionDescription is NULL")
+                        return
+                    }
+
                     Log.d("WebRTCService", "Original Local Offer SDP:\n${desc.description}")
                     val modifiedSdp = normalizeSdpForCodec(desc.description, preferredCodec, 300)
                     Log.d("WebRTCService", "Modified Local Offer SDP:\n$modifiedSdp")
 
                     if (!isValidSdp(modifiedSdp, preferredCodec)) {
-                        Log.e("WebRTCService", "Falling back to original SDP due to invalid modification")
-                        webRTCClient.peerConnection?.setLocalDescription(
-                            object : SdpObserver {
-                                override fun onSetSuccess() {
-                                    Log.d("WebRTCService", "Successfully set original local description")
-                                    sendSessionDescription(desc)
-                                }
-                                override fun onSetFailure(error: String) {
-                                    Log.e("WebRTCService", "Error setting original local description: $error")
-                                }
-                                override fun onCreateSuccess(p0: SessionDescription?) {}
-                                override fun onCreateFailure(error: String) {}
-                            }, desc
-                        )
+                        Log.e("WebRTCService", "Invalid modified SDP, falling back to original")
+                        setLocalDescription(desc)
                         return
                     }
 
                     val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
-                    webRTCClient.peerConnection?.setLocalDescription(
-                        object : SdpObserver {
-                            override fun onSetSuccess() {
-                                Log.d("WebRTCService", "Successfully set local description")
-                                sendSessionDescription(modifiedDesc)
-                            }
-                            override fun onSetFailure(error: String) {
-                                Log.e("WebRTCService", "Error setting local description: $error")
-                            }
-                            override fun onCreateSuccess(p0: SessionDescription?) {}
-                            override fun onCreateFailure(error: String) {}
-                        }, modifiedDesc
-                    )
+                    setLocalDescription(modifiedDesc)
                 }
 
-                override fun onCreateFailure(error: String) {
+                override fun onCreateFailure(error: String?) {
                     Log.e("WebRTCService", "Error creating offer: $error")
                 }
+
                 override fun onSetSuccess() {}
-                override fun onSetFailure(error: String) {}
+                override fun onSetFailure(error: String?) {}
             }, constraints)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error in createOffer", e)
         }
     }
 
-    // Метод для отправки подтверждения переключения камеры
+    private fun setLocalDescription(desc: SessionDescription) {
+        webRTCClient.peerConnection?.setLocalDescription(object : SdpObserver {
+            override fun onSetSuccess() {
+                Log.d("WebRTCService", "Successfully set local description")
+                sendSessionDescription(desc)
+            }
+
+            override fun onSetFailure(error: String?) {
+                Log.e("WebRTCService", "Error setting local description: $error")
+                // Пробуем реинициализацию
+                handler.postDelayed({
+                    cleanupWebRTCResources()
+                    initializeWebRTC()
+                    createOffer()
+                }, 2000)
+            }
+
+            override fun onCreateSuccess(p0: SessionDescription?) {}
+            override fun onCreateFailure(error: String?) {}
+        }, desc)
+    }
+
     private fun sendCameraSwitchAck(useBackCamera: Boolean) {
         try {
             val message = JSONObject().apply {
@@ -783,7 +765,6 @@ class WebRTCService : Service() {
                 sdp.getString("sdp")
             )
 
-            // Извлекаем preferredCodec из сообщения или используем значение по умолчанию
             val preferredCodec = offer.optString("preferredCodec", "H264")
 
             webRTCClient.peerConnection?.setRemoteDescription(object : SdpObserver {
@@ -809,46 +790,32 @@ class WebRTCService : Service() {
     private fun createAnswer(constraints: MediaConstraints, preferredCodec: String = "H264") {
         try {
             webRTCClient.peerConnection?.createAnswer(object : SdpObserver {
-                override fun onCreateSuccess(desc: SessionDescription) {
+                override fun onCreateSuccess(desc: SessionDescription?) {
+                    if (desc == null) {
+                        Log.e("WebRTCService", "Created SessionDescription is NULL")
+                        return
+                    }
+
                     Log.d("WebRTCService", "Original Local Answer SDP:\n${desc.description}")
                     val modifiedSdp = normalizeSdpForCodec(desc.description, preferredCodec, 300)
                     Log.d("WebRTCService", "Modified Local Answer SDP:\n$modifiedSdp")
 
                     if (!isValidSdp(modifiedSdp, preferredCodec)) {
-                        Log.e("WebRTCService", "Falling back to original SDP due to invalid modification")
-                        webRTCClient.peerConnection?.setLocalDescription(object : SdpObserver {
-                            override fun onSetSuccess() {
-                                Log.d("WebRTCService", "Successfully set original local description")
-                                sendSessionDescription(desc)
-                            }
-                            override fun onSetFailure(error: String) {
-                                Log.e("WebRTCService", "Error setting original local description: $error")
-                            }
-                            override fun onCreateSuccess(p0: SessionDescription?) {}
-                            override fun onCreateFailure(error: String) {}
-                        }, desc)
+                        Log.e("WebRTCService", "Invalid modified SDP, falling back to original")
+                        setLocalDescription(desc)
                         return
                     }
 
                     val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
-                    webRTCClient.peerConnection?.setLocalDescription(object : SdpObserver {
-                        override fun onSetSuccess() {
-                            Log.d("WebRTCService", "Successfully set local description")
-                            sendSessionDescription(modifiedDesc)
-                        }
-                        override fun onSetFailure(error: String) {
-                            Log.e("WebRTCService", "Error setting local description: $error")
-                        }
-                        override fun onCreateSuccess(p0: SessionDescription?) {}
-                        override fun onCreateFailure(error: String) {}
-                    }, modifiedDesc)
+                    setLocalDescription(modifiedDesc)
                 }
 
-                override fun onCreateFailure(error: String) {
+                override fun onCreateFailure(error: String?) {
                     Log.e("WebRTCService", "Error creating answer: $error")
                 }
+
                 override fun onSetSuccess() {}
-                override fun onSetFailure(error: String) {}
+                override fun onSetFailure(error: String?) {}
             }, constraints)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error creating answer", e)
@@ -858,7 +825,6 @@ class WebRTCService : Service() {
     private fun sendSessionDescription(desc: SessionDescription) {
         Log.d("WebRTCService", "Sending SDP: ${desc.type} \n${desc.description}")
         try {
-            // Определяем используемый кодек
             val codec = when {
                 desc.description.contains("a=rtpmap:.*H264") -> "H264"
                 desc.description.contains("a=rtpmap:.*VP8") -> "VP8"
@@ -871,7 +837,7 @@ class WebRTCService : Service() {
                     put("type", desc.type.canonicalForm())
                     put("sdp", desc.description)
                 })
-                put("codec", codec) // Добавляем поле codec
+                put("codec", codec)
                 put("room", roomName)
                 put("username", userName)
                 put("target", "browser")
@@ -898,7 +864,6 @@ class WebRTCService : Service() {
 
                 override fun onSetFailure(error: String) {
                     Log.e("WebRTCService", "Error setting answer: $error")
-                    // При ошибке запрашиваем новый оффер
                     handler.postDelayed({ createOffer() }, 2000)
                 }
 
@@ -961,7 +926,7 @@ class WebRTCService : Service() {
             .setContentTitle("WebRTC Service")
             .setContentText("Active in room: $roomName")
             .setSmallIcon(R.drawable.ic_notification)
-            .setPriority(NotificationCompat.PRIORITY_HIGH) // Измените на HIGH
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setOngoing(true)
             .build()
     }
@@ -987,7 +952,6 @@ class WebRTCService : Service() {
             if (isStateReceiverRegistered) {
                 unregisterReceiver(stateReceiver)
             }
-            // Автоматический перезапуск только если не было явной остановки
             scheduleRestartWithWorkManager()
         }
         super.onDestroy()
@@ -1061,12 +1025,11 @@ class WebRTCService : Service() {
     }
 
     private fun scheduleRestartWithWorkManager() {
-        // Убедитесь, что используете ApplicationContext
         val workRequest = OneTimeWorkRequestBuilder<WebRTCWorker>()
             .setInitialDelay(1, TimeUnit.MINUTES)
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED) // Только при наличии сети
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build()
             )
             .build()

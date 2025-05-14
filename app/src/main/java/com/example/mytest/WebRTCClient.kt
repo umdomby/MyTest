@@ -19,6 +19,7 @@ class WebRTCClient(
     internal var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
+
     init {
         initializePeerConnectionFactory()
         peerConnection = createPeerConnection()
@@ -31,16 +32,22 @@ class WebRTCClient(
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            .setFieldTrials("WebRTC-H264Profile/42e01f/")
+            .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
-        // Проверяем, Samsung ли это
-        val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
-        val videoEncoderFactory: VideoEncoderFactory = if (isSamsung) {
-            SoftwareVideoEncoderFactory() // Программное кодирование для Samsung
+        val eglBase = EglBase.create()
+        // Проверяем поддержку H.264
+        val tempEncoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
+        val supportedCodecs = tempEncoderFactory.supportedCodecs
+        Log.d("WebRTCClient", "Supported codecs: ${supportedCodecs.joinToString { it.name }}")
+
+        // Выбираем подходящий videoEncoderFactory
+        val videoEncoderFactory = if (!supportedCodecs.any { it.name == "H264" }) {
+            Log.w("WebRTCClient", "H.264 not supported by hardware, using software fallback")
+            SoftwareVideoEncoderFactory() // Используем программный кодек
         } else {
-            DefaultVideoEncoderFactory(eglBase.eglBaseContext, false, true)
+            tempEncoderFactory // Используем аппаратный кодек с H.264
         }
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
