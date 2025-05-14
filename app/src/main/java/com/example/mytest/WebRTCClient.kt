@@ -31,28 +31,19 @@ class WebRTCClient(
     private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            // Форсируем H.264 High Profile и разрешаем разные режимы пакетизации
-            // 42e01f (Constrained Baseline) часто более совместим, чем High.
-            // Если High Profile (обычно 64xxxx) вызывает проблемы с iOS/старыми Android, используйте:
-            // .setFieldTrials("WebRTC-H264Profile/42e01f/") // Пример для Constrained Baseline
-            .setFieldTrials("WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/")
+            .setFieldTrials("WebRTC-H264Profile/42e01f/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
-        // Используем DefaultVideoEncoderFactory, отключая другие кодеки, если возможно,
-        // или SoftwareVideoEncoderFactory для большей предсказуемости H.264.
-        val videoEncoderFactory: VideoEncoderFactory = DefaultVideoEncoderFactory(
-            eglBase.eglBaseContext,
-            false,  // disable Intel VP8 encoder
-            true    // enable H264 High Profile (или false, если H264 обеспечивается платформой/Software factory)
-        )
-        // Альтернатива для большей стабильности H.264, если есть проблемы с аппаратными кодерами:
-        // val videoEncoderFactory: VideoEncoderFactory = SoftwareVideoEncoderFactory()
+        // Проверяем, Samsung ли это
+        val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
+        val videoEncoderFactory: VideoEncoderFactory = if (isSamsung) {
+            SoftwareVideoEncoderFactory() // Программное кодирование для Samsung
+        } else {
+            DefaultVideoEncoderFactory(eglBase.eglBaseContext, false, true)
+        }
 
-        val videoDecoderFactory: VideoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
-        // Альтернатива:
-        // val videoDecoderFactory: VideoDecoderFactory = SoftwareVideoDecoderFactory()
-
+        val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(videoEncoderFactory)
@@ -162,31 +153,46 @@ class WebRTCClient(
     private fun createVideoTrack() {
         try {
             videoCapturer = createCameraCapturer()
-            videoCapturer?.let { capturer ->
-                surfaceTextureHelper = SurfaceTextureHelper.create(
-                    "CaptureThread",
-                    eglBase.eglBaseContext
-                )
-
-                val videoSource = peerConnectionFactory.createVideoSource(false)
-                capturer.initialize(
-                    surfaceTextureHelper,
-                    context,
-                    videoSource.capturerObserver
-                )
-
-                // Старт с оптимальными параметрами для H264
-                capturer.startCapture(640, 480, 15) // 640x480 @ 15fps
-
-                localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
-                    addSink(localView)
-                }
-
-                // Устанавливаем начальный битрейт
-                setVideoEncoderBitrate(300000, 400000, 500000) // 300-500 kbps
+            if (videoCapturer == null) {
+                Log.e("WebRTCClient", "Failed to create video capturer")
+                return
             }
+
+            surfaceTextureHelper = SurfaceTextureHelper.create(
+                "CaptureThread",
+                eglBase.eglBaseContext
+            )
+            if (surfaceTextureHelper == null) {
+                Log.e("WebRTCClient", "Failed to create SurfaceTextureHelper")
+                return
+            }
+
+            val videoSource = peerConnectionFactory.createVideoSource(false)
+            videoCapturer?.initialize(
+                surfaceTextureHelper,
+                context,
+                videoSource.capturerObserver
+            )
+
+            val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
+            videoCapturer?.startCapture(
+                if (isSamsung) 480 else 640,
+                if (isSamsung) 360 else 480,
+                if (isSamsung) 15 else 20
+            )
+
+            localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
+                addSink(localView)
+            }
+
+            setVideoEncoderBitrate(
+                if (isSamsung) 150000 else 300000,
+                if (isSamsung) 200000 else 400000,
+                if (isSamsung) 300000 else 500000
+            )
+            Log.d("WebRTCClient", "Video track created successfully")
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error creating video track", e)
+            Log.e("WebRTCClient", "Error creating video track: ${e.message}", e)
         }
     }
 
@@ -211,14 +217,16 @@ class WebRTCClient(
 
 
     private fun createCameraCapturer(): VideoCapturer? {
-        return Camera2Enumerator(context).run {
-            deviceNames.find { isFrontFacing(it) }?.let {
-                Log.d("WebRTC", "Using front camera: $it")
-                createCapturer(it, null)
-            } ?: deviceNames.firstOrNull()?.let {
-                Log.d("WebRTC", "Using first available camera: $it")
-                createCapturer(it, null)
-            }
+        val enumerator = Camera2Enumerator(context)
+        return enumerator.deviceNames.find { enumerator.isFrontFacing(it) }?.let {
+            Log.d("WebRTC", "Using front camera: $it")
+            enumerator.createCapturer(it, null)
+        } ?: enumerator.deviceNames.firstOrNull()?.let {
+            Log.d("WebRTC", "Using first available camera: $it")
+            enumerator.createCapturer(it, null)
+        } ?: run {
+            Log.e("WebRTC", "No cameras available")
+            null
         }
     }
 

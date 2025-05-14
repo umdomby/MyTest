@@ -533,7 +533,7 @@ class WebRTCService : Service() {
             when (message.optString("type")) {
                 "rejoin_and_offer" -> {
                     Log.d("WebRTCService", "Received rejoin command from server")
-                    val preferredCodec = message.optString("preferredCodec", "H264")
+                    val preferredCodec = message.optString("preferredCodec", "H264") // Используем переданный кодек
                     handler.post {
                         cleanupWebRTCResources()
                         initializeWebRTC()
@@ -542,8 +542,9 @@ class WebRTCService : Service() {
                 }
                 "create_offer_for_new_follower" -> {
                     Log.d("WebRTCService", "Received request to create offer for new follower")
+                    val preferredCodec = message.optString("preferredCodec", "H264") // Используем переданный кодек
                     handler.post {
-                        createOffer("VP8") // Согласованность с браузером
+                        createOffer(preferredCodec)
                     }
                 }
                 "bandwidth_estimation" -> {
@@ -576,7 +577,7 @@ class WebRTCService : Service() {
     }
 
     // Вспомогательная функция для модификации SDP на Android
-    private fun normalizeSdpForCodec(sdp: String, targetCodec: String, targetBitrateAs: Int = 500): String {
+    private fun normalizeSdpForCodec(sdp: String, targetCodec: String, targetBitrateAs: Int = 300): String {
         var newSdp = sdp
         val codecName = when (targetCodec) {
             "H264" -> "H264"
@@ -587,14 +588,16 @@ class WebRTCService : Service() {
             }
         }
 
+        Log.d("WebRTCService", "Normalizing SDP for codec: $codecName")
+
         // 1. Найти payload type для целевого кодека
         val rtpmapRegex = "a=rtpmap:(\\d+) $codecName(?:/\\d+)?".toRegex()
         val rtpmapMatches = rtpmapRegex.findAll(newSdp)
         val targetPayloadTypes = rtpmapMatches.map { it.groupValues[1] }.toList()
 
         if (targetPayloadTypes.isEmpty()) {
-            Log.w("WebRTCService", "$codecName payload type not found in SDP")
-            return newSdp
+            Log.e("WebRTCService", "$codecName payload type not found in SDP")
+            return sdp // Возвращаем оригинальный SDP, чтобы не сломать соединение
         }
 
         val targetPayloadType = targetPayloadTypes.first()
@@ -608,18 +611,13 @@ class WebRTCService : Service() {
         }
         for (codecToRemove in videoCodecsToRemove) {
             val ptToRemoveRegex = "a=rtpmap:(\\d+) $codecToRemove(?:/\\d+)?\r\n".toRegex()
-            var matchResult = ptToRemoveRegex.find(newSdp)
-            while (matchResult != null) {
-                val pt = matchResult.groupValues[1]
-                newSdp = newSdp.replace("a=rtpmap:$pt $codecToRemove(?:/\\d+)?\r\n".toRegex(), "")
-                newSdp = newSdp.replace("a=fmtp:$pt .*\r\n".toRegex(), "")
-                newSdp = newSdp.replace("a=rtcp-fb:$pt .*\r\n".toRegex(), "")
-                Log.d("WebRTCService", "Removed $codecToRemove (PT: $pt) from SDP")
-                matchResult = ptToRemoveRegex.find(newSdp)
-            }
+            newSdp = newSdp.replace(ptToRemoveRegex, "")
+            newSdp = newSdp.replace("a=fmtp:(\\d+) .*\\r\\n".toRegex(), "")
+            newSdp = newSdp.replace("a=rtcp-fb:(\\d+) .*\\r\\n".toRegex(), "")
+            Log.d("WebRTCService", "Removed $codecToRemove from SDP")
         }
 
-        // 3. Модифицировать fmtp только для H264
+        // 3. Модифицировать fmtp для H.264
         if (codecName == "H264") {
             val desiredFmtp = "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1"
             for (pt in targetPayloadTypes) {
@@ -656,12 +654,16 @@ class WebRTCService : Service() {
         newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\nb=AS:$targetBitrateAs\r\n")
         Log.d("WebRTCService", "Set video bitrate to AS:$targetBitrateAs")
 
-        // 6. Проверка валидности SDP
+        // 6. Добавить информацию о кодеке в SDP для отладки
+        newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\na=codec-info:$codecName\r\n")
+
+        // 7. Проверка валидности SDP
         if (!newSdp.contains("m=video") || !newSdp.contains("a=rtpmap:.*$codecName")) {
             Log.e("WebRTCService", "Invalid SDP after modification: missing m=video or $codecName")
             return sdp
         }
 
+        Log.d("WebRTCService", "Final normalized SDP:\n$newSdp")
         return newSdp
     }
 
@@ -855,12 +857,20 @@ class WebRTCService : Service() {
     private fun sendSessionDescription(desc: SessionDescription) {
         Log.d("WebRTCService", "Sending SDP: ${desc.type} \n${desc.description}")
         try {
+            // Определяем используемый кодек
+            val codec = when {
+                desc.description.contains("a=rtpmap:.*H264") -> "H264"
+                desc.description.contains("a=rtpmap:.*VP8") -> "VP8"
+                else -> "Unknown"
+            }
+
             val message = JSONObject().apply {
                 put("type", desc.type.canonicalForm())
                 put("sdp", JSONObject().apply {
                     put("type", desc.type.canonicalForm())
                     put("sdp", desc.description)
                 })
+                put("codec", codec) // Добавляем поле codec
                 put("room", roomName)
                 put("username", userName)
                 put("target", "browser")
