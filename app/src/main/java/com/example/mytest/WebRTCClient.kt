@@ -28,37 +28,31 @@ class WebRTCClient(
         createLocalTracks()
     }
 
-    private fun initializePeerConnectionFactory(preferredCodec: String = "H264") {
+    private fun initializePeerConnectionFactory() {
         val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
-            .setFieldTrials(
-                when (preferredCodec) {
-                    "H264" -> "WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/"
-                    "VP8" -> "WebRTC-VP8-AutoConstrained/Enabled/"
-                    else -> {
-                        Log.w("WebRTCClient", "Unknown codec $preferredCodec, defaulting to H264")
-                        "WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/"
-                    }
-                }
-            )
+            // Форсируем H.264 High Profile и разрешаем разные режимы пакетизации
+            // 42e01f (Constrained Baseline) часто более совместим, чем High.
+            // Если High Profile (обычно 64xxxx) вызывает проблемы с iOS/старыми Android, используйте:
+            // .setFieldTrials("WebRTC-H264Profile/42e01f/") // Пример для Constrained Baseline
+            .setFieldTrials("WebRTC-H264HighProfile/Enabled/WebRTC-H264PacketizationMode/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
-        // Configure codec-specific encoder/decoder factories
-        val videoEncoderFactory: VideoEncoderFactory = when (preferredCodec) {
-            "H264" -> DefaultVideoEncoderFactory(eglBase.eglBaseContext, false, true) // Disable VP8, enable H.264
-            "VP8" -> DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, false) // Enable VP8, disable H.264
-            else -> {
-                Log.w("WebRTCClient", "Using default H.264 encoder factory")
-                DefaultVideoEncoderFactory(eglBase.eglBaseContext, false, true)
-            }
-        }
+        // Используем DefaultVideoEncoderFactory, отключая другие кодеки, если возможно,
+        // или SoftwareVideoEncoderFactory для большей предсказуемости H.264.
+        val videoEncoderFactory: VideoEncoderFactory = DefaultVideoEncoderFactory(
+            eglBase.eglBaseContext,
+            false,  // disable Intel VP8 encoder
+            true    // enable H264 High Profile (или false, если H264 обеспечивается платформой/Software factory)
+        )
+        // Альтернатива для большей стабильности H.264, если есть проблемы с аппаратными кодерами:
+        // val videoEncoderFactory: VideoEncoderFactory = SoftwareVideoEncoderFactory()
 
-        val videoDecoderFactory: VideoDecoderFactory = when (preferredCodec) {
-            "H264" -> DefaultVideoDecoderFactory(eglBase.eglBaseContext) // H.264 decoding
-            "VP8" -> DefaultVideoDecoderFactory(eglBase.eglBaseContext) // VP8 decoding
-            else -> DefaultVideoDecoderFactory(eglBase.eglBaseContext)
-        }
+        val videoDecoderFactory: VideoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+        // Альтернатива:
+        // val videoDecoderFactory: VideoDecoderFactory = SoftwareVideoDecoderFactory()
+
 
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(videoEncoderFactory)
@@ -68,8 +62,6 @@ class WebRTCClient(
                 disableNetworkMonitor = false
             })
             .createPeerConnectionFactory()
-
-        Log.d("WebRTCClient", "PeerConnectionFactory initialized with codec: $preferredCodec")
     }
 
     private fun createPeerConnection(): PeerConnection? {
@@ -137,9 +129,9 @@ class WebRTCClient(
         }
     }
 
-    private fun createLocalTracks(preferredCodec: String = "H264") {
+    private fun createLocalTracks() {
         createAudioTrack()
-        createVideoTrack(preferredCodec)
+        createVideoTrack()
 
         val streamId = "ARDAMS"
         val stream = peerConnectionFactory.createLocalMediaStream(streamId)
@@ -147,17 +139,11 @@ class WebRTCClient(
         localAudioTrack?.let {
             stream.addTrack(it)
             peerConnection?.addTrack(it, listOf(streamId))
-            Log.d("WebRTCClient", "Added local audio track to stream $streamId")
         }
 
         localVideoTrack?.let {
             stream.addTrack(it)
             peerConnection?.addTrack(it, listOf(streamId))
-            Log.d("WebRTCClient", "Added local video track to stream $streamId with codec $preferredCodec")
-        }
-
-        if (localVideoTrack == null) {
-            Log.e("WebRTCClient", "Failed to create local video track")
         }
     }
 
@@ -173,14 +159,9 @@ class WebRTCClient(
         localAudioTrack = peerConnectionFactory.createAudioTrack("ARDAMSa0", audioSource)
     }
 
-    private fun createVideoTrack(preferredCodec: String) {
+    private fun createVideoTrack() {
         try {
             videoCapturer = createCameraCapturer()
-            if (videoCapturer == null) {
-                Log.e("WebRTCClient", "No camera capturer available")
-                return
-            }
-
             videoCapturer?.let { capturer ->
                 surfaceTextureHelper = SurfaceTextureHelper.create(
                     "CaptureThread",
@@ -194,46 +175,18 @@ class WebRTCClient(
                     videoSource.capturerObserver
                 )
 
-                // Adjust capture settings based on codec
-                val (width, height, fps) = when (preferredCodec) {
-                    "H264" -> Triple(640, 480, 15)
-                    "VP8" -> Triple(640, 480, 20)
-                    else -> Triple(640, 480, 15)
-                }
-
-                var captureAttempts = 0
-                val maxCaptureAttempts = 3
-                while (captureAttempts < maxCaptureAttempts) {
-                    try {
-                        capturer.startCapture(width, height, fps)
-                        Log.d("WebRTCClient", "Started video capture: ${width}x$height@$fps for $preferredCodec")
-                        break
-                    } catch (e: Exception) {
-                        captureAttempts++
-                        Log.e("WebRTCClient", "Capture attempt $captureAttempts failed: ${e.message}")
-                        if (captureAttempts >= maxCaptureAttempts) {
-                            Log.e("WebRTCClient", "Max capture attempts reached, giving up")
-                            return
-                        }
-                        Thread.sleep(1000) // Wait before retry
-                    }
-                }
+                // Старт с оптимальными параметрами для H264
+                capturer.startCapture(640, 480, 15) // 640x480 @ 15fps
 
                 localVideoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource).apply {
                     addSink(localView)
                 }
 
-                // Set codec-specific bitrate
-                val (minBitrate, currBitrate, maxBitrate) = when (preferredCodec) {
-                    "H264" -> Triple(300000, 400000, 500000)
-                    "VP8" -> Triple(200000, 300000, 400000)
-                    else -> Triple(300000, 400000, 500000)
-                }
-                setVideoEncoderBitrate(minBitrate, currBitrate, maxBitrate)
-                Log.d("WebRTCClient", "Set video bitrate: $minBitrate-$maxBitrate bps for $preferredCodec")
+                // Устанавливаем начальный битрейт
+                setVideoEncoderBitrate(300000, 400000, 500000) // 300-500 kbps
             }
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error creating video track for $preferredCodec", e)
+            Log.e("WebRTCClient", "Error creating video track", e)
         }
     }
 
