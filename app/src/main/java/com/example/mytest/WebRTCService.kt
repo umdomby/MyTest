@@ -96,10 +96,13 @@ class WebRTCService : Service() {
 
     private fun isValidSdp(sdp: String, codecName: String): Boolean {
         val hasVideoSection = sdp.contains("m=video")
-        val hasCodec = sdp.contains("a=rtpmap:.*$codecName")
-        if (!hasVideoSection || !hasCodec) {
-            Log.e("WebRTCService", "SDP validation failed: hasVideoSection=$hasVideoSection, hasCodec=$hasCodec")
+        val hasCodec = sdp.contains("a=rtpmap:.*$codecName") || sdp.contains("a=rtpmap:.*")
+        if (!hasVideoSection) {
+            Log.e("WebRTCService", "SDP validation failed: missing m=video section")
             return false
+        }
+        if (!hasCodec) {
+            Log.w("WebRTCService", "SDP validation warning: no codecs found, but proceeding")
         }
         return true
     }
@@ -532,8 +535,8 @@ class WebRTCService : Service() {
 
             when (message.optString("type")) {
                 "rejoin_and_offer" -> {
-                    Log.d("WebRTCService", "Received rejoin command from server")
                     val preferredCodec = message.optString("preferredCodec", "H264")
+                    Log.d("WebRTCService", "Received rejoin_and_offer command with preferred codec: $preferredCodec")
                     handler.post {
                         cleanupWebRTCResources()
                         initializeWebRTC()
@@ -586,6 +589,8 @@ class WebRTCService : Service() {
                 "H264"
             }
         }
+        Log.d("WebRTCService", "Normalizing SDP for codec: $codecName with bitrate AS:$targetBitrateAs")
+        Log.d("WebRTCService", "Original SDP:\n$sdp")
 
         // 1. Найти payload type для целевого кодека
         val rtpmapRegex = "a=rtpmap:(\\d+) $codecName(?:/\\d+)?".toRegex()
@@ -594,6 +599,7 @@ class WebRTCService : Service() {
 
         if (targetPayloadTypes.isEmpty()) {
             Log.w("WebRTCService", "$codecName payload type not found in SDP")
+            // Если целевой кодек отсутствует, оставляем SDP без изменений, но логируем
             return newSdp
         }
 
@@ -656,12 +662,13 @@ class WebRTCService : Service() {
         newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\nb=AS:$targetBitrateAs\r\n")
         Log.d("WebRTCService", "Set video bitrate to AS:$targetBitrateAs")
 
-        // 6. Проверка валидности SDP
-        if (!newSdp.contains("m=video") || !newSdp.contains("a=rtpmap:.*$codecName")) {
-            Log.e("WebRTCService", "Invalid SDP after modification: missing m=video or $codecName")
+        // 6. Дополнительная проверка SDP
+        if (!newSdp.contains("m=video")) {
+            Log.e("WebRTCService", "Invalid SDP after modification: missing m=video")
             return sdp
         }
 
+        Log.d("WebRTCService", "Final SDP:\n$newSdp")
         return newSdp
     }
 
@@ -673,29 +680,7 @@ class WebRTCService : Service() {
                 return
             }
 
-            // Настройка кодеков через RTCRtpTransceiver
-            webRTCClient.peerConnection?.transceivers?.filter {
-                it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO && it.sender != null
-            }?.forEach { transceiver ->
-                try {
-                    val sender = transceiver.sender
-                    val parameters = sender.parameters
-                    if (parameters != null) {
-                        val targetCodecs = parameters.codecs.filter { codecInfo ->
-                            codecInfo.name.equals(preferredCodec, ignoreCase = true)
-                        }
-                        if (targetCodecs.isNotEmpty()) {
-                            parameters.codecs = ArrayList(targetCodecs)
-                            val result = sender.setParameters(parameters)
-                            Log.d("WebRTCService", "Set $preferredCodec codec preference: $result")
-                        } else {
-                            Log.w("WebRTCService", "$preferredCodec codec not found in sender parameters")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("WebRTCService", "Error setting codec preferences", e)
-                }
-            }
+            Log.d("WebRTCService", "Creating offer with preferred codec: $preferredCodec")
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
