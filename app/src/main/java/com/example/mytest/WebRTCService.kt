@@ -529,6 +529,7 @@ class WebRTCService : Service() {
             when (message.optString("type")) {
                 "rejoin_and_offer" -> {
                     Log.d("WebRTCService", "Received rejoin command from server")
+                    val preferredCodec = message.optString("preferredCodec", "H264")
                     handler.post {
                         // 1. Очищаем текущее соединение
                         cleanupWebRTCResources()
@@ -536,8 +537,8 @@ class WebRTCService : Service() {
                         // 2. Инициализируем новое соединение
                         initializeWebRTC()
 
-                        // 3. Создаем новый оффер
-                        createOffer()
+                        // 3. Создаем новый оффер с указанным кодеком
+                        createOffer(preferredCodec)
                     }
                 }
                 "create_offer_for_new_follower" -> {
@@ -561,12 +562,10 @@ class WebRTCService : Service() {
                 "ice_candidate" -> handleIceCandidate(message)
                 "room_info" -> {}
                 "switch_camera" -> {
-                    // Обрабатываем команду переключения камеры
                     val useBackCamera = message.optBoolean("useBackCamera", false)
                     Log.d("WebRTCService", "Received switch camera command: useBackCamera=$useBackCamera")
                     handler.post {
                         webRTCClient.switchCamera(useBackCamera)
-                        // Отправляем подтверждение
                         sendCameraSwitchAck(useBackCamera)
                     }
                 }
@@ -578,31 +577,44 @@ class WebRTCService : Service() {
     }
 
     // Вспомогательная функция для модификации SDP на Android
-    private fun forceH264AndNormalizeSdp(sdp: String, targetBitrateAs: Int = 500): String {
+    private fun normalizeSdpForCodec(sdp: String, targetCodec: String, targetBitrateAs: Int = 500): String {
         var newSdp = sdp
-        var h264PayloadType: String? = null
-        val codecName = "H264" // Или "H264/90000" для большей точности
 
-        // 1. Найти payload type для H264
-        // Пример: a=rtpmap:96 H264/90000
-        val rtpmapRegex = "a=rtpmap:(\\d+) $codecName(?:/\\d+)?".toRegex()
-        val rtpmapMatches = rtpmapRegex.findAll(newSdp)
 
-        val h264PayloadTypes = rtpmapMatches.map { it.groupValues[1] }.toList()
-
-        if (h264PayloadTypes.isEmpty()) {
-            Log.w("WebRTCService", "$codecName payload type not found in SDP. Cannot force $codecName specific fmtp.")
-            // Можно попробовать добавить H264, но это очень сложно и ненадежно на этом этапе.
-            // Лучше убедиться, что PeerConnectionFactory настроен на его предложение.
-            return newSdp // Возвращаем как есть, если H264 не предложен
+        var targetPayloadType: String? = null
+        val codecName = when (targetCodec) {
+            "H264" -> "H264"
+            "VP8" -> "VP8"
+            else -> {
+                Log.w("WebRTCService", "Unknown target codec: $targetCodec, defaulting to H264")
+                "H264"
+            }
         }
 
-        h264PayloadType = h264PayloadTypes.first() // Берем первый найденный, предполагая, что он главный
-        Log.d("WebRTCService", "Found $codecName payload type: $h264PayloadType")
+        if (!newSdp.contains("m=video") || !newSdp.contains("a=rtpmap:$targetPayloadType")) {
+            Log.e("WebRTCService", "Invalid SDP after modification: missing m=video or target codec")
+            return sdp // Возвращаем оригинальный SDP
+        }
 
-        // 2. Удалить другие видеокодеки (VP8, VP9, AV1 и т.д.)
-        // Это сделает H.264 единственным вариантом, если он есть.
-        val videoCodecsToRemove = listOf("VP8", "VP9", "AV1") // Добавьте другие при необходимости
+        // 1. Найти payload type для целевого кодека
+        val rtpmapRegex = "a=rtpmap:(\\d+) $codecName(?:/\\d+)?".toRegex()
+        val rtpmapMatches = rtpmapRegex.findAll(newSdp)
+        val targetPayloadTypes = rtpmapMatches.map { it.groupValues[1] }.toList()
+
+        if (targetPayloadTypes.isEmpty()) {
+            Log.w("WebRTCService", "$codecName payload type not found in SDP")
+            return newSdp // Возвращаем без изменений, если кодек не найден
+        }
+
+        targetPayloadType = targetPayloadTypes.first()
+        Log.d("WebRTCService", "Found $codecName payload type: $targetPayloadType")
+
+        // 2. Удалить другие видеокодеки
+        val videoCodecsToRemove = when (codecName) {
+            "H264" -> listOf("VP8", "VP9", "AV1")
+            "VP8" -> listOf("H264", "VP9", "AV1")
+            else -> emptyList()
+        }
         for (codecToRemove in videoCodecsToRemove) {
             val ptToRemoveRegex = "a=rtpmap:(\\d+) $codecToRemove(?:/\\d+)?\r\n".toRegex()
             var matchResult = ptToRemoveRegex.find(newSdp)
@@ -612,134 +624,100 @@ class WebRTCService : Service() {
                 newSdp = newSdp.replace("a=fmtp:$pt .*\r\n".toRegex(), "")
                 newSdp = newSdp.replace("a=rtcp-fb:$pt .*\r\n".toRegex(), "")
                 Log.d("WebRTCService", "Removed $codecToRemove (PT: $pt) from SDP")
-                matchResult = ptToRemoveRegex.find(newSdp) // Ищем следующее вхождение
+                matchResult = ptToRemoveRegex.find(newSdp)
             }
         }
 
-        // 3. Модифицировать fmtp для H264 (для всех найденных PT H264, хотя обычно он один главный)
-        // profile-level-id=42e01f (Constrained Baseline Level 3.1) - хорошая совместимость
-        // packetization-mode=1 (Non-interleaved mode) - предпочтительно
-        val desiredFmtp = "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1"
-        for (pt in h264PayloadTypes) {
-            val fmtpSearchRegex = "a=fmtp:$pt .*\r\n".toRegex()
-            val newFmtpLine = "a=fmtp:$pt $desiredFmtp\r\n"
-            if (newSdp.contains(fmtpSearchRegex)) {
-                newSdp = newSdp.replace(fmtpSearchRegex, newFmtpLine)
-            } else {
-                // Если fmtp нет, добавляем его после rtpmap
-                newSdp = newSdp.replace("a=rtpmap:$pt $codecName(?:/\\d+)?\r\n",
-                    "a=rtpmap:$pt $codecName/90000\r\n$newFmtpLine") // Убедимся, что clockrate есть
+        // 3. Модифицировать fmtp для целевого кодека
+        if (codecName == "H264") {
+            val desiredFmtp = "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1"
+            for (pt in targetPayloadTypes) {
+                val fmtpSearchRegex = "a=fmtp:$pt .*\r\n".toRegex()
+                val newFmtpLine = "a=fmtp:$pt $desiredFmtp\r\n"
+                if (newSdp.contains(fmtpSearchRegex)) {
+                    newSdp = newSdp.replace(fmtpSearchRegex, newFmtpLine)
+                } else {
+                    newSdp = newSdp.replace(
+                        "a=rtpmap:$pt $codecName(?:/\\d+)?\r\n",
+                        "a=rtpmap:$pt $codecName/90000\r\n$newFmtpLine"
+                    )
+                }
+                Log.d("WebRTCService", "Set $codecName (PT: $pt) fmtp to: $desiredFmtp")
             }
-            Log.d("WebRTCService", "Set $codecName (PT: $pt) fmtp to: $desiredFmtp")
         }
 
-
-        // 4. Убедиться, что H264 - первый кодек в m=video линии
+        // 4. Убедиться, что целевой кодек первый в m=video линии
         val mLineRegex = "^(m=video\\s+\\d+\\s+UDP/(?:TLS/)?RTP/SAVPF\\s+)(.*)".toRegex(RegexOption.MULTILINE)
         newSdp = mLineRegex.replace(newSdp) { mLineMatchResult ->
-            val prefix = mLineMatchResult.groupValues[1] // "m=video 9 UDP/TLS/RTP/SAVPF "
-            var payloads = mLineMatchResult.groupValues[2].split(" ").toMutableList() // ["100", "101", "96"]
-
-            // Удаляем все payload types, которые мы удалили из rtpmap
+            val prefix = mLineMatchResult.groupValues[1]
+            var payloads = mLineMatchResult.groupValues[2].split(" ").toMutableList()
             val activePayloadTypesInSdp = "a=rtpmap:(\\d+)".toRegex().findAll(newSdp).map { it.groupValues[1] }.toSet()
             payloads = payloads.filter { activePayloadTypesInSdp.contains(it) }.toMutableList()
-
-
-            // Перемещаем H264 payload type(s) в начало, если они есть
-            val h264PtsInOrder = h264PayloadTypes.filter { payloads.contains(it) }
-            h264PtsInOrder.forEach { payloads.remove(it) }
-            payloads.addAll(0, h264PtsInOrder)
-
+            val targetPtsInOrder = targetPayloadTypes.filter { payloads.contains(it) }
+            targetPtsInOrder.forEach { payloads.remove(it) }
+            payloads.addAll(0, targetPtsInOrder)
             Log.d("WebRTCService", "Reordered m=video payloads to: ${payloads.joinToString(" ")}")
             prefix + payloads.joinToString(" ")
         }
 
         // 5. Установить битрейт для видео секции
-        // Сначала удаляем существующие b=AS и b=TIAS из видео секций, чтобы не дублировать
         newSdp = newSdp.replace(Regex("^(a=mid:video\r\n(?:(?!a=mid:).*\r\n)*?)b=(AS|TIAS):\\d+\r\n", RegexOption.MULTILINE), "$1")
-        newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\nb=AS:$targetBitrateAs\r\n") // b=TIAS:${targetBitrateAs * 1000}
+        newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\nb=AS:$targetBitrateAs\r\n")
         Log.d("WebRTCService", "Set video bitrate to AS:$targetBitrateAs")
 
         return newSdp
     }
 
     // Модифицируем createOffer для принудительного создания нового оффера
-    private fun createOffer() {
+    private fun createOffer(preferredCodec: String = "H264") {
         try {
             if (!::webRTCClient.isInitialized || !isConnected) {
                 Log.w("WebRTCService", "Cannot create offer - not initialized or connected")
                 return
             }
 
-            // Опционально: Настройка кодеков через RTCRtpTransceiver ПЕРЕД createOffer
-            // Это более современный способ, чем MediaConstraints для codec preferences.
+            // Настройка кодеков через RTCRtpTransceiver
             webRTCClient.peerConnection?.transceivers?.filter {
                 it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO && it.sender != null
             }?.forEach { transceiver ->
                 try {
-                    val sender = transceiver.sender // Получаем RtpSender
-                    val parameters = sender.parameters // Используем getParameters()
+                    val sender = transceiver.sender
+                    val parameters = sender.parameters
 
                     if (parameters != null) {
-                        // Фильтруем кодеки, оставляя только H264
-                        val h264Codecs = parameters.codecs.filter { codecInfo ->
-                            codecInfo.name.equals("H264", ignoreCase = true)
+                        val targetCodecs = parameters.codecs.filter { codecInfo ->
+                            codecInfo.name.equals(preferredCodec, ignoreCase = true)
                         }
 
-                        if (h264Codecs.isNotEmpty()) {
-                            // Создаем новый список кодеков только с H264
-                            // Важно: оригинальный список parameters.codecs может быть немодифицируемым
-                            val newCodecList = ArrayList(h264Codecs)
-
-                            // Можно попытаться настроить параметры для H264 здесь, если нужно
-                            // newCodecList.forEach { codecInfo ->
-                            //    if (codecInfo.name.equals("H264", ignoreCase = true)) {
-                            //        // codecInfo.parameters - это карта, можно попробовать добавить/изменить
-                            //        // codecInfo.parameters["profile-level-id"] = "42e01f" // Пример
-                            //        // codecInfo.parameters["packetization-mode"] = "1" // Пример
-                            //    }
-                            // }
-                            // Однако, установка profile-level-id и packetization-mode через SDP обычно надежнее
-
-                            parameters.codecs = newCodecList // Устанавливаем отфильтрованный список
-                            val result = sender.setParameters(parameters) // Используем setParameters()
+                        if (targetCodecs.isNotEmpty()) {
+                            val newCodecList = ArrayList(targetCodecs)
+                            parameters.codecs = newCodecList
+                            val result = sender.setParameters(parameters)
                             if (result) {
-                                Log.d("WebRTCService", "Successfully set H264 as preferred codec for video sender.")
+                                Log.d("WebRTCService", "Successfully set $preferredCodec as preferred codec")
                             } else {
-                                Log.w("WebRTCService", "Failed to set H264 as preferred codec for video sender.")
+                                Log.w("WebRTCService", "Failed to set $preferredCodec as preferred codec")
                             }
                         } else {
-                            Log.w("WebRTCService", "H264 codec not found in sender parameters.")
+                            Log.w("WebRTCService", "$preferredCodec codec not found in sender parameters")
                         }
-                    } else {
-                        Log.w("WebRTCService", "Sender parameters are null for video transceiver.")
                     }
-                    // Альтернативный, более современный способ, если доступен и подходит:
-                    // val h264Capabilities = transceiver.receiver.capabilities("video").codecs
-                    //    .filter { it.name.equals("H264", ignoreCase = true) }
-                    // if (h264Capabilities.isNotEmpty()) {
-                    //    transceiver.setCodecPreferences(h264Capabilities)
-                    //    Log.d("WebRTCService", "Set H264 codec preferences for video transceiver.")
-                    // }
                 } catch (e: Exception) {
-                    Log.e("WebRTCService", "Error setting codec preferences for transceiver", e)
+                    Log.e("WebRTCService", "Error setting codec preferences", e)
                 }
             }
-
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-                // googCodecPreferences устарел, используем setCodecPreferences или SDP манглинг
-                // mandatory.add(MediaConstraints.KeyValuePair("googCodecPreferences", "H264"))
-                mandatory.add(MediaConstraints.KeyValuePair("googCpuOveruseDetection", "true")) // Ок
-                mandatory.add(MediaConstraints.KeyValuePair("googScreencastMinBitrate", "300")) // Ок
+                mandatory.add(MediaConstraints.KeyValuePair("googCpuOveruseDetection", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googScreencastMinBitrate", "300"))
             }
 
             webRTCClient.peerConnection?.createOffer(object : SdpObserver {
                 override fun onCreateSuccess(desc: SessionDescription) {
                     Log.d("WebRTCService", "Original Local Offer SDP:\n${desc.description}")
-                    val modifiedSdp = forceH264AndNormalizeSdp(desc.description, 300) // Битрейт 300 для Android оффера
+                    val modifiedSdp = normalizeSdpForCodec(desc.description, preferredCodec, 300)
                     Log.d("WebRTCService", "Modified Local Offer SDP:\n$modifiedSdp")
 
                     val modifiedDesc = SessionDescription(desc.type, modifiedSdp)
@@ -752,7 +730,6 @@ class WebRTCService : Service() {
 
                         override fun onSetFailure(error: String) {
                             Log.e("WebRTCService", "Error setting local description: $error")
-                            // handler.postDelayed({ createOffer() }, 2000) // Осторожно с ретраями
                         }
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(error: String) {}
@@ -761,14 +738,12 @@ class WebRTCService : Service() {
 
                 override fun onCreateFailure(error: String) {
                     Log.e("WebRTCService", "Error creating offer: $error")
-                    // handler.postDelayed({ createOffer() }, 2000) // Осторожно с ретраями
                 }
                 override fun onSetSuccess() {}
                 override fun onSetFailure(error: String) {}
             }, constraints)
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error in createOffer", e)
-            // handler.postDelayed({ createOffer() }, 2000) // Осторожно с ретраями
         }
     }
 
