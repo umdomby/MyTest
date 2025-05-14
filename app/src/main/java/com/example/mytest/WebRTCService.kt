@@ -597,7 +597,7 @@ class WebRTCService : Service() {
 
         if (targetPayloadTypes.isEmpty()) {
             Log.e("WebRTCService", "$codecName payload type not found in SDP")
-            return sdp // Возвращаем оригинальный SDP, чтобы не сломать соединение
+            return sdp
         }
 
         val targetPayloadType = targetPayloadTypes.first()
@@ -658,7 +658,7 @@ class WebRTCService : Service() {
         newSdp = newSdp.replace("a=mid:video\r\n", "a=mid:video\r\na=codec-info:$codecName\r\n")
 
         // 7. Проверка валидности SDP
-        if (!newSdp.contains("m=video") || !newSdp.contains("a=rtpmap:.*$codecName")) {
+        if (!isValidSdp(newSdp, codecName)) {
             Log.e("WebRTCService", "Invalid SDP after modification: missing m=video or $codecName")
             return sdp
         }
@@ -669,6 +669,7 @@ class WebRTCService : Service() {
 
     // Модифицируем createOffer для принудительного создания нового оффера
     private fun createOffer(preferredCodec: String = "H264") {
+        Log.d("WebRTCService", "Creating offer with preferred codec: $preferredCodec")
         try {
             if (!::webRTCClient.isInitialized || !isConnected) {
                 Log.w("WebRTCService", "Cannot create offer - not initialized or connected")
