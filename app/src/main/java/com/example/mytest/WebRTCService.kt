@@ -172,6 +172,7 @@ class WebRTCService : Service() {
                 var videoPacketsLost = 0L
                 var videoPacketsSent = 0L
                 var availableSendBandwidth = 0L
+                var roundTripTime = 0.0
 
                 statsReport.statsMap.values.forEach { stats ->
                     when {
@@ -181,16 +182,18 @@ class WebRTCService : Service() {
                         }
                         stats.type == "candidate-pair" && stats.members["state"] == "succeeded" -> {
                             availableSendBandwidth = stats.members["availableOutgoingBitrate"] as? Long ?: 0L
+                            roundTripTime = stats.members["currentRoundTripTime"] as? Double ?: 0.0
                         }
                     }
                 }
 
                 if (videoPacketsSent > 0) {
                     val lossRate = videoPacketsLost.toDouble() / videoPacketsSent.toDouble()
+                    Log.d("WebRTCService", "Packet loss: $lossRate, Bandwidth: $availableSendBandwidth, RTT: $roundTripTime")
                     handler.post {
                         when {
-                            lossRate > 0.1 -> reduceVideoQuality() // >10% потерь
-                            lossRate < 0.05 && availableSendBandwidth > 700000 -> increaseVideoQuality() // <5% потерь и хорошая пропускная способность
+                            lossRate > 0.05 || roundTripTime > 0.5 -> reduceVideoQuality() // >5% потерь или RTT > 500ms
+                            lossRate < 0.02 && availableSendBandwidth > 1000000 -> increaseVideoQuality() // <2% потерь и >1Mbps
                         }
                     }
                 }
@@ -205,7 +208,7 @@ class WebRTCService : Service() {
             webRTCClient.videoCapturer?.let { capturer ->
                 capturer.stopCapture()
                 capturer.startCapture(480, 360, 15)
-                webRTCClient.setVideoEncoderBitrate(150000, 200000, 300000)
+                webRTCClient.setVideoEncoderBitrate(300000, 400000, 500000)
                 Log.d("WebRTCService", "Reduced video quality to 480x360@15fps, 200kbps")
             }
         } catch (e: Exception) {
@@ -217,9 +220,9 @@ class WebRTCService : Service() {
         try {
             webRTCClient.videoCapturer?.let { capturer ->
                 capturer.stopCapture()
-                capturer.startCapture(640, 480, 20)
-                webRTCClient.setVideoEncoderBitrate(300000, 400000, 500000)
-                Log.d("WebRTCService", "Increased video quality to 640x480@20fps, 400kbps")
+                capturer.startCapture(640, 360, 15)
+                webRTCClient.setVideoEncoderBitrate(600000, 800000, 1000000)
+                Log.d("WebRTCService", "Increased video quality to 854x480@20fps, 800kbps")
             }
         } catch (e: Exception) {
             Log.e("WebRTCService", "Error increasing video quality", e)
