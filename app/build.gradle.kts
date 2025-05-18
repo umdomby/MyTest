@@ -43,9 +43,9 @@ android {
 }
 
 dependencies {
-    // WebRTC
+    // Локальная сборка WebRTC
+    //implementation(files("libs/libwebrtc.aar"))
     implementation("io.github.webrtc-sdk:android:125.6422.07")
-
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
