@@ -1,4 +1,4 @@
-package com.example.mytest
+package com.example.ardua
 
 import android.content.Context
 import android.os.Build
@@ -148,13 +148,13 @@ class WebRTCClient(
             videoCapturer = createCameraCapturer()
             if (videoCapturer == null) {
                 Log.e("WebRTCClient", "Failed to create video capturer")
-                return
+                throw IllegalStateException("Video capturer is null")
             }
 
             surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
             if (surfaceTextureHelper == null) {
                 Log.e("WebRTCClient", "Failed to create SurfaceTextureHelper")
-                return
+                throw IllegalStateException("SurfaceTextureHelper is null")
             }
 
             val videoSource = peerConnectionFactory.createVideoSource(false)

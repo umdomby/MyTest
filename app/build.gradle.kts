@@ -47,16 +47,16 @@ android {
         viewBinding = true
         dataBinding = true
     }
-    ndkVersion = "25.1.8937393"
+    ndkVersion = "28.1.13356709"
     buildToolsVersion = "36.0.0"
 }
 
 dependencies {
     // Локальная сборка WebRTC
-    // implementation("io.github.webrtc-sdk:android:125.6422.07")
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
     //implementation ("org.webrtc:google-webrtc:1.0.32006")
 
-    implementation(files("libs/webrtc.aar"))
+    //implementation(files("libs/webrtc.aar"))
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
