@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import org.webrtc.*
+import org.webrtc.PeerConnectionFactory.InitializationOptions
 
 class WebRTCClient(
     private val context: Context,
@@ -12,13 +13,12 @@ class WebRTCClient(
     private val remoteView: SurfaceViewRenderer,
     private val observer: PeerConnection.Observer
 ) {
-    lateinit var peerConnectionFactory: PeerConnectionFactory
+    private lateinit var peerConnectionFactory: PeerConnectionFactory
     var peerConnection: PeerConnection? = null
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     internal var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
-
 
     init {
         initializePeerConnectionFactory()
@@ -30,47 +30,46 @@ class WebRTCClient(
     }
 
     private fun initializePeerConnectionFactory() {
-        val initializationOptions = PeerConnectionFactory.InitializationOptions.builder(context)
+        // 1. Инициализация WebRTC
+        val initializationOptions = InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
             .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(initializationOptions)
 
-        val eglBase = EglBase.create()
-        // Проверяем поддержку H.264
-        val tempEncoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
-        val supportedCodecs = tempEncoderFactory.supportedCodecs
-        Log.d("WebRTCClient", "Supported codecs: ${supportedCodecs.joinToString { it.name }}")
-
-        // Выбираем подходящий videoEncoderFactory
-        val videoEncoderFactory = if (!supportedCodecs.any { it.name == "H264" }) {
-            Log.w("WebRTCClient", "H.264 not supported by hardware, using software fallback")
-            SoftwareVideoEncoderFactory() // Используем программный кодек
-        } else {
-            tempEncoderFactory // Используем аппаратный кодек с H.264
-        }
+        // 2. Создание фабрик кодеков
+        val videoEncoderFactory = DefaultVideoEncoderFactory(
+            eglBase.eglBaseContext,
+            true,  // enableIntelVp8Encoder
+            true   // enableH264HighProfile
+        )
 
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
+        // 3. Настройка опций
+        val options = PeerConnectionFactory.Options().apply {
+            disableEncryption = false
+            disableNetworkMonitor = false
+        }
+
+        // 4. Создание фабрики PeerConnection
         peerConnectionFactory = PeerConnectionFactory.builder()
+            .setOptions(options)
             .setVideoEncoderFactory(videoEncoderFactory)
             .setVideoDecoderFactory(videoDecoderFactory)
-            .setOptions(PeerConnectionFactory.Options().apply {
-                disableEncryption = false
-                disableNetworkMonitor = false
-            })
             .createPeerConnectionFactory()
     }
 
     private fun createPeerConnection(): PeerConnection? {
-        val rtcConfig = PeerConnection.RTCConfiguration(listOf(
-            PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
-            PeerConnection.IceServer.builder("turn:ardua.site:3478")
-                .setUsername("user1")
-                .setPassword("pass1")
-                .createIceServer()
-        )).apply {
-
+        val rtcConfig = PeerConnection.RTCConfiguration(
+            listOf(
+                PeerConnection.IceServer.builder("stun:ardua.site:3478").createIceServer(),
+                PeerConnection.IceServer.builder("turn:ardua.site:3478")
+                    .setUsername("user1")
+                    .setPassword("pass1")
+                    .createIceServer()
+            )
+        ).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceTransportsType = PeerConnection.IceTransportsType.ALL
@@ -84,44 +83,31 @@ class WebRTCClient(
         return peerConnectionFactory.createPeerConnection(rtcConfig, observer)
     }
 
-    // В WebRTCClient.kt добавляем обработку переключения камеры
     internal fun switchCamera(useBackCamera: Boolean) {
         try {
             videoCapturer?.let { capturer ->
                 if (capturer is CameraVideoCapturer) {
-                    if (useBackCamera) {
-                        // Switch to back camera
-                        val cameraEnumerator = Camera2Enumerator(context)
-                        val deviceNames = cameraEnumerator.deviceNames
-                        deviceNames.find { !cameraEnumerator.isFrontFacing(it) }?.let { backCameraId ->
-                            capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
-                                override fun onCameraSwitchDone(isFrontCamera: Boolean) {
-                                    Log.d("WebRTCClient", "Switched to back camera")
-                                }
-
-                                override fun onCameraSwitchError(error: String) {
-                                    Log.e("WebRTCClient", "Error switching to back camera: $error")
-                                }
-                            })
-                        }
-                    } else {
-                        // Switch to front camera
-                        val cameraEnumerator = Camera2Enumerator(context)
-                        val deviceNames = cameraEnumerator.deviceNames
-                        deviceNames.find { cameraEnumerator.isFrontFacing(it) }?.let { frontCameraId ->
-                            capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
-                                override fun onCameraSwitchDone(isFrontCamera: Boolean) {
-                                    Log.d("WebRTCClient", "Switched to front camera")
-                                }
-
-                                override fun onCameraSwitchError(error: String) {
-                                    Log.e("WebRTCClient", "Error switching to front camera: $error")
-                                }
-                            })
-                        }
+                    val enumerator = Camera2Enumerator(context)
+                    val targetCamera = enumerator.deviceNames.find {
+                        if (useBackCamera) !enumerator.isFrontFacing(it) else enumerator.isFrontFacing(it)
                     }
+                    if (targetCamera != null) {
+                        capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                            override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                                Log.d("WebRTCClient", "Switched to ${if (isFrontCamera) "front" else "back"} camera")
+                            }
+
+                            override fun onCameraSwitchError(error: String) {
+                                Log.e("WebRTCClient", "Error switching camera: $error")
+                            }
+                        }, targetCamera)
+                    } else {
+                        Log.e("WebRTCClient", "No ${if (useBackCamera) "back" else "front"} camera found")
+                    }
+                } else {
+                    Log.w("WebRTCClient", "Video capturer is not a CameraVideoCapturer")
                 }
-            }
+            } ?: Log.w("WebRTCClient", "Video capturer is null")
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error switching camera", e)
         }
@@ -165,21 +151,14 @@ class WebRTCClient(
                 return
             }
 
-            surfaceTextureHelper = SurfaceTextureHelper.create(
-                "CaptureThread",
-                eglBase.eglBaseContext
-            )
+            surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
             if (surfaceTextureHelper == null) {
                 Log.e("WebRTCClient", "Failed to create SurfaceTextureHelper")
                 return
             }
 
             val videoSource = peerConnectionFactory.createVideoSource(false)
-            videoCapturer?.initialize(
-                surfaceTextureHelper,
-                context,
-                videoSource.capturerObserver
-            )
+            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
 
             val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
             videoCapturer?.startCapture(
@@ -199,11 +178,10 @@ class WebRTCClient(
             )
             Log.d("WebRTCClient", "Video track created successfully")
         } catch (e: Exception) {
-            Log.e("WebRTCClient", "Error creating video track: ${e.message}", e)
+            Log.e("WebRTCClient", "Error creating video track", e)
         }
     }
 
-    // Функция для установки битрейта
     fun setVideoEncoderBitrate(minBitrate: Int, currentBitrate: Int, maxBitrate: Int) {
         try {
             val sender = peerConnection?.senders?.find { it.track()?.kind() == "video" }
@@ -214,25 +192,24 @@ class WebRTCClient(
                     parameters.encodings[0].maxBitrateBps = maxBitrate
                     parameters.encodings[0].bitratePriority = 1.0
                     videoSender.parameters = parameters
+                    Log.d("WebRTCClient", "Set video bitrate: min=$minBitrate, max=$maxBitrate")
                 }
-            }
+            } ?: Log.w("WebRTCClient", "No video sender found")
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error setting video bitrate", e)
         }
     }
 
-
-
     private fun createCameraCapturer(): VideoCapturer? {
         val enumerator = Camera2Enumerator(context)
         return enumerator.deviceNames.find { enumerator.isFrontFacing(it) }?.let {
-            Log.d("WebRTC", "Using front camera: $it")
+            Log.d("WebRTCClient", "Using front camera: $it")
             enumerator.createCapturer(it, null)
         } ?: enumerator.deviceNames.firstOrNull()?.let {
-            Log.d("WebRTC", "Using first available camera: $it")
+            Log.d("WebRTCClient", "Using first available camera: $it")
             enumerator.createCapturer(it, null)
         } ?: run {
-            Log.e("WebRTC", "No cameras available")
+            Log.e("WebRTCClient", "No cameras available")
             null
         }
     }
@@ -242,11 +219,13 @@ class WebRTCClient(
             videoCapturer?.let { capturer ->
                 try {
                     capturer.stopCapture()
+                    Log.d("WebRTCClient", "Video capturer stopped")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error stopping capturer", e)
                 }
                 try {
                     capturer.dispose()
+                    Log.d("WebRTCClient", "Video capturer disposed")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error disposing capturer", e)
                 }
@@ -256,6 +235,7 @@ class WebRTCClient(
                 try {
                     track.removeSink(localView)
                     track.dispose()
+                    Log.d("WebRTCClient", "Local video track disposed")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error disposing video track", e)
                 }
@@ -264,6 +244,7 @@ class WebRTCClient(
             localAudioTrack?.let { track ->
                 try {
                     track.dispose()
+                    Log.d("WebRTCClient", "Local audio track disposed")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error disposing audio track", e)
                 }
@@ -272,6 +253,7 @@ class WebRTCClient(
             surfaceTextureHelper?.let { helper ->
                 try {
                     helper.dispose()
+                    Log.d("WebRTCClient", "SurfaceTextureHelper disposed")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error disposing surface helper", e)
                 }
@@ -280,14 +262,23 @@ class WebRTCClient(
             peerConnection?.let { pc ->
                 try {
                     pc.close()
+                    Log.d("WebRTCClient", "Peer connection closed")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error closing peer connection", e)
                 }
                 try {
                     pc.dispose()
+                    Log.d("WebRTCClient", "Peer connection disposed")
                 } catch (e: Exception) {
                     Log.e("WebRTCClient", "Error disposing peer connection", e)
                 }
+            }
+
+            try {
+                peerConnectionFactory.dispose()
+                Log.d("WebRTCClient", "PeerConnectionFactory disposed")
+            } catch (e: Exception) {
+                Log.e("WebRTCClient", "Error disposing PeerConnectionFactory", e)
             }
         } catch (e: Exception) {
             Log.e("WebRTCClient", "Error in cleanup", e)

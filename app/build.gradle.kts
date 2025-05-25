@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.mytest"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.mytest"
@@ -15,6 +15,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        ndk {
+            abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -28,24 +32,31 @@ android {
             )
         }
     }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
     }
+
     buildFeatures {
         compose = true
         viewBinding = true
         dataBinding = true
     }
+    ndkVersion = "25.1.8937393"
+    buildToolsVersion = "36.0.0"
 }
 
 dependencies {
     // Локальная сборка WebRTC
-    //implementation(files("libs/libwebrtc.aar"))
-    implementation("io.github.webrtc-sdk:android:125.6422.07")
+    // implementation("io.github.webrtc-sdk:android:125.6422.07")
+    //implementation ("org.webrtc:google-webrtc:1.0.32006")
+
+    implementation(files("libs/webrtc.aar"))
     // WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
